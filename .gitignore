@@ -1,0 +1,13 @@
+# Virtual environment (created by uv)
+.venv/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Runtime config (example config is committed)
+config.json
+
+# OS files
+.DS_Store
+Thumbs.db
