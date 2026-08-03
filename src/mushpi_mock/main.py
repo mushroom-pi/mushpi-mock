@@ -37,7 +37,7 @@ from .announce import announce_with_retry
 from .config import MockConfig, UnitConfig, load_config
 from .router import router
 from .simulation import SimulationEngine, seed_readings
-from .state import UnitState
+from .state import _SOFTWARE_VERSION, UnitState
 
 
 def create_app(
@@ -105,7 +105,7 @@ def create_app(
 
     app = FastAPI(
         title=f"MushPi Mock — {unit_config.handle}",
-        version="0.1.0",
+        version=_SOFTWARE_VERSION,
         lifespan=lifespan,
     )
 

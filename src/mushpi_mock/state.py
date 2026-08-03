@@ -20,7 +20,6 @@ from __future__ import annotations
 import time
 from typing import Any
 
-
 # Must match mushpi-grow/app/state.py::_SOFTWARE_VERSION (the source of truth).
 # Also keep src/mushpi_mock/VERSION in sync — it's a plain-text version file
 # used for automated checks between the two repos.

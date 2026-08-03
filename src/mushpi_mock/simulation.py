@@ -56,18 +56,20 @@ class SimulationEngine:
         realistic bounds.
         """
         # Temperature: +/- 0.5 degrees per tick
+        # DHT11 returns integers — round to match real hardware behavior.
         temp = self.state._sensors["temperature"]
         if temp is not None:
             temp += random.uniform(-0.5, 0.5)
             temp = max(self.temp_min, min(self.temp_max, temp))
-            self.state._sensors["temperature"] = round(temp, 1)
+            self.state._sensors["temperature"] = int(round(temp))
 
         # Humidity: +/- 1% per tick
+        # DHT11 returns integers — server DTO requires @IsInt() on humidity.
         hum = self.state._sensors["humidity"]
         if hum is not None:
             hum += random.uniform(-1.0, 1.0)
             hum = max(self.hum_min, min(self.hum_max, hum))
-            self.state._sensors["humidity"] = round(hum, 1)
+            self.state._sensors["humidity"] = int(round(hum))
 
         # Reset the "age" counter (sensor was just read)
         self.state._sensors["last_ok_age_s"] = 0
@@ -123,7 +125,7 @@ def seed_readings(state: UnitState, days: int) -> list[dict]:
     readings: list[dict] = []
     temp = 24.0
     hum = 80.0
-    now = datetime.datetime.now()
+    now = datetime.datetime.now()  # noqa: DTZ005
     start = now - datetime.timedelta(days=days)
     total_seconds = days * 86400
 
@@ -137,13 +139,13 @@ def seed_readings(state: UnitState, days: int) -> list[dict]:
         ts = start + datetime.timedelta(seconds=offset)
         readings.append({
             "timestamp": ts.isoformat(),
-            "temperature": round(temp, 1),
-            "humidity": round(hum, 1),
+            "temperature": int(round(temp)),
+            "humidity": int(round(hum)),
         })
 
     # Update the live state to the final values so the simulation
     # continues from where the seed left off
-    state._sensors["temperature"] = round(temp, 1)
-    state._sensors["humidity"] = round(hum, 1)
+    state._sensors["temperature"] = int(round(temp))
+    state._sensors["humidity"] = int(round(hum))
 
     return readings

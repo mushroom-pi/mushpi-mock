@@ -27,7 +27,6 @@ import httpx
 
 from .state import UnitState
 
-
 # Backoff schedule in seconds — matches the real Pico's retry pattern
 _BACKOFF_SCHEDULE = [5, 10, 30, 60]
 
