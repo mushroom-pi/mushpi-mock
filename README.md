@@ -2,7 +2,7 @@
 
 Mock Pico growing units — mirrors the [`mushpi-grow`](../mushpi-grow/) firmware's REST API with synthetic sensor data. Use for development, demos, screenshots, and testing without real hardware.
 
-Each mock unit runs as an independent FastAPI server on its own port, announces itself to the server on startup, and generates realistic random-walk sensor readings (temperature 20–28°C, humidity 70–90%).
+Each mock unit runs as an independent FastAPI server on its own port, announces itself to the server on startup, and generates **hysteresis-simulated sensor readings** matching the real Pico's control loop behavior — sawtooth oscillation around setpoints, not random noise.
 
 ## Quick Start
 
@@ -26,10 +26,11 @@ uv run mushpi-mock start --config config.example.json
 ## How It Works
 
 1. **Start**: The CLI spawns one or more uvicorn servers, each on its own port.
-2. **Announce**: Each unit `POST`s to `http://localhost:3000/v1/pico-units/announce` (configured in `config.example.json`). Retries with exponential backoff if the server isn't ready.
-3. **Simulate**: A background async task does a random walk on temperature (±0.5°C) and humidity (±1%) every 2 seconds, clamped to realistic DHT11 ranges.
-4. **Serve**: The FastAPI app exposes all Pico endpoints — `GET /`, `/sensors`, `/setpoints`, `/outputs`, `/control`, `/setup`, `/health`, `/system`, plus `POST`/`PUT` mutations.
-5. **Poll**: The server polls `GET /` every 60 seconds (same as with real Pico units) and stores readings in SQLite.
+2. **Announce**: Each unit `POST`s to `http://localhost:3000/v1/pico-units/announce` (configured in `config.json`). Retries with exponential backoff if the server isn't ready. Returns the `pico_unit_id` assigned by the server.
+3. **Simulate**: A hysteresis control loop (3-zone humidity, 2-zone temperature) produces a characteristic sawtooth oscillation around setpoints — matching the real Pico firmware's behavior. Humidifier ON drives humidity up, fan ON drives it down, heater ON drives temperature up.
+4. **Seed** (optional): `--seed-days N` bulk-inserts N days of backdated readings into the server's SQLite database via Python's `sqlite3` stdlib. All 17 columns populated — temperature, humidity, relay states, setpoints, board metrics, response time. Requires `db_path` in `config.json` and a successful announce.
+5. **Serve**: The FastAPI app exposes all Pico endpoints — `GET /`, `/sensors`, `/setpoints`, `/outputs`, `/control`, `/setup`, `/health`, `/system`, plus `POST`/`PUT` mutations.
+6. **Poll**: The server polls `GET /` every 60 seconds (same as with real Pico units) and stores readings in SQLite.
 
 ## Architecture
 
@@ -39,7 +40,8 @@ mushpi-mock (Python + FastAPI + uv)
     ├── config.py       Pydantic config models (like ConfigModule + Joi)
     ├── state.py        In-memory unit state (like an @Injectable() service)
     ├── router.py       All Pico API endpoints (like a @Controller())
-    ├── simulation.py   Random-walk sensor data (like a @Cron() service)
+    ├── simulation.py   Hysteresis control loop (like a @Cron() service)
+    ├── seed.py         Direct SQLite bulk seeding for --seed-days
     └── announce.py     Server announce on startup (like a bootstrap hook)
 ```
 
