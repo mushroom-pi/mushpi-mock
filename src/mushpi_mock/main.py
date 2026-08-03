@@ -18,6 +18,11 @@ NestJS mapping:
 
     Key difference: NestJS has a built-in module system for DI. FastAPI
     uses plain Python — we wire dependencies manually in create_app().
+
+Startup sequence:
+    1. HTTP server starts immediately (accepts requests right away)
+    2. Background task: announce → seed → start simulation
+    3. Simulation begins producing hysteresis-driven sensor data
 """
 
 from __future__ import annotations
@@ -36,7 +41,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from .announce import announce_with_retry
 from .config import MockConfig, UnitConfig, load_config
 from .router import router
-from .simulation import SimulationEngine, seed_readings
+from .seed import seed_readings
+from .simulation import SimulationEngine
 from .state import _SOFTWARE_VERSION, UnitState
 
 
@@ -45,6 +51,7 @@ def create_app(
     server_url: str,
     hub_secret: str,
     seed_days: int = 0,
+    db_path: str | None = None,
 ) -> FastAPI:
     """Create a FastAPI app for a single mock Pico unit.
 
@@ -59,48 +66,77 @@ def create_app(
         server_url: Server base URL for announce POST.
         hub_secret: Shared secret for X-Pico-Secret header.
         seed_days: If > 0, generate backdated readings on startup.
+        db_path: Path to server's SQLite DB (required for seeding).
     """
     state = UnitState(handle=unit_config.handle, port=unit_config.port)
     simulation = SimulationEngine(state)
-
-    # Optional: seed historical data
-    if seed_days > 0:
-        readings = seed_readings(state, seed_days)
-        print(
-            f"  [{unit_config.handle}] Seeded {len(readings)} readings "
-            f"over {seed_days} days"
-        )
-        print(
-            f"  [{unit_config.handle}] Initial sensors: "
-            f"temp={state._sensors['temperature']}C, "
-            f"hum={state._sensors['humidity']}%"
-        )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         """Startup/shutdown lifecycle.
 
         NestJS equivalent: onModuleInit() / onModuleDestroy() hooks.
-        The lifespan context manager runs:
-            - On startup: start simulation + announce to server
-            - On shutdown: stop simulation
-        """
-        # ── Startup ───────────────────────────────────────────────────
-        simulation.start()
-        print(
-            f"  [{unit_config.handle}] Simulation started "
-            f"(tick every {simulation.tick_interval}s)"
-        )
 
-        # Announce in background (don't block server startup)
-        asyncio.create_task(
-            announce_with_retry(state, server_url, hub_secret)
-        )
+        The HTTP server starts immediately (yield is reached right away).
+        Announce + seeding + simulation start run in a background task so
+        the server is responsive even if the hub is unreachable.
+
+        Sequence:
+            1. Server starts accepting requests (yield)
+            2. Background task: announce → seed → start simulation
+        """
+        # ── Background init: announce → seed → start simulation ───────
+        async def _init_and_start() -> None:
+            """Announce, seed, then start simulation in the background.
+
+            The server is already accepting requests — this task runs
+            concurrently. Sensors show initial values until the simulation
+            kicks in (which is fine for demos).
+            """
+            # 1. Announce (blocking within this task — retries with backoff)
+            ok, unit_id = await announce_with_retry(state, server_url, hub_secret)
+
+            # 2. Seed historical data
+            if seed_days > 0:
+                if not ok or unit_id is None:
+                    print(
+                        f"  [{unit_config.handle}] Skipping seed: announce failed "
+                        f"(need pico_unit_id from server)"
+                    )
+                elif db_path is None:
+                    print(
+                        f"  [{unit_config.handle}] ERROR: --seed-days requires "
+                        f"'db_path' in config.json or config file. "
+                        f"Add: \"db_path\": \"../mushpi-server/data/app.sqlite\""
+                    )
+                else:
+                    count = seed_readings(unit_id, db_path, seed_days, state)
+                    if count > 0:
+                        print(
+                            f"  [{unit_config.handle}] Seeded {count} readings "
+                            f"over {seed_days} day(s) → {db_path}"
+                        )
+                        print(
+                            f"  [{unit_config.handle}] Post-seed sensors: "
+                            f"temp={state._sensors['temperature']}°C, "
+                            f"hum={state._sensors['humidity']}%"
+                        )
+                    # count == 0 means DB error — already logged by seed_readings()
+
+            # 3. Start simulation (after announce + seed complete)
+            simulation.start()
+            print(
+                f"  [{unit_config.handle}] Simulation started "
+                f"(tick every {simulation.tick_interval}s)"
+            )
+
+        init_task = asyncio.create_task(_init_and_start())
 
         yield
 
         # ── Shutdown ──────────────────────────────────────────────────
         simulation.stop()
+        init_task.cancel()
         print(f"  [{unit_config.handle}] Simulation stopped")
 
     app = FastAPI(
@@ -162,8 +198,8 @@ def cli() -> None:
         # Start from a config file
         mushpi-mock start --config config.json
 
-        # Seed 14 days of historical data
-        mushpi-mock start --seed-days 14
+        # Seed 14 days of historical data (requires db_path in config)
+        mushpi-mock start --seed-days 14 --config config.json
     """
     pass
 
@@ -202,7 +238,7 @@ def cli() -> None:
     "--seed-days",
     type=int,
     default=0,
-    help="Generate N days of backdated readings on startup",
+    help="Generate N days of backdated readings on startup (requires db_path in config)",
 )
 def start(
     config: str | None,
@@ -248,7 +284,13 @@ async def _run_all(cfg: MockConfig, seed_days: int) -> None:
     servers: list[uvicorn.Server] = []
 
     for unit_cfg in cfg.units:
-        app = create_app(unit_cfg, cfg.server_url, cfg.hub_secret, seed_days)
+        app = create_app(
+            unit_cfg,
+            cfg.server_url,
+            cfg.hub_secret,
+            seed_days,
+            cfg.db_path,
+        )
         config = uvicorn.Config(
             app,
             host="0.0.0.0",

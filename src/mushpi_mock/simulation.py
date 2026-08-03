@@ -1,17 +1,31 @@
 """
-Random-walk sensor data generator.
+Hysteresis-based sensor simulation engine.
 
 NestJS mapping:
     This is like a @Cron() service that periodically updates sensor values.
     In NestJS you'd use:
         @Cron(CronExpression.EVERY_5_SECONDS)
-        handleCron() { this.temperature += randomWalk(); }
+        handleCron() { this.simulateTick(); }
     Here we use asyncio.create_task() with asyncio.sleep() instead.
 
-The simulation produces realistic but not perfectly stable readings:
-    - Temperature: 20-28 degrees C, +/-0.5 per tick
-    - Humidity: 70-90%, +/-1 per tick
-Both are clamped to realistic DHT11 ranges.
+The simulation produces realistic sawtooth oscillation around setpoints,
+matching the real Pico's hysteresis control loop behavior:
+
+    Humidity:
+        below setpoint        → humidifier ON → humidity rises (+0.5 to +1.5/tick)
+        above setpoint + hyst → fan ON        → humidity drops (-1.0 to -0.3/tick)
+        in between            → no change      → drift ±0.3
+
+    Temperature:
+        below setpoint        → heater ON  → temp rises (+0.3 to +0.8/tick)
+        above setpoint + hyst → heater OFF → temp drops (-0.5 to -0.1/tick)
+        in between            → no change   → drift ±0.3
+
+    When control_loop_enabled = false: all relays OFF, free random walk.
+
+The core logic lives in `compute_hysteresis_tick()` — a pure function shared
+by both the live SimulationEngine and the offline seed generator (seed.py).
+This avoids duplicating the hysteresis rules in two places.
 """
 
 from __future__ import annotations
@@ -21,59 +35,148 @@ import random
 
 from .state import UnitState
 
+# ── DHT11 physical limits ──────────────────────────────────────────────────
+# The real sensor can't report outside these ranges. We clamp to prevent
+# the simulation from drifting into unrealistic territory.
+DHT11_TEMP_MIN = 0.0
+DHT11_TEMP_MAX = 50.0
+DHT11_HUM_MIN = 10.0
+DHT11_HUM_MAX = 90.0
+
+
+def compute_hysteresis_tick(
+    temp: float,
+    humidity: float,
+    outputs: dict[str, bool],
+    setpoints: dict[str, int],
+    control_enabled: bool,
+    hyst_temp: int = 1,
+    hyst_hum: int = 5,
+) -> tuple[float, float, dict[str, bool]]:
+    """One tick of hysteresis simulation — the core algorithm.
+
+    This is a **pure function** (no side effects, no state mutation) so it
+    can be reused by both the live simulation engine and the seed generator.
+
+    The three-zone hysteresis matches the real firmware's control_loop():
+        Zone 1 (below setpoint):          actuator ON  → value moves toward setpoint
+        Zone 2 (setpoint to setpoint+hyst): hold zone  → value drifts slightly
+        Zone 3 (above setpoint+hyst):     actuator OFF → value moves away
+
+    Args:
+        temp: Current temperature reading.
+        humidity: Current humidity reading.
+        outputs: Current relay states {"fan": bool, "humidifier": bool, "heater": bool}.
+        setpoints: Target values {"temperature": int, "humidity": int}.
+        control_enabled: Whether the control loop is active.
+        hyst_temp: Temperature hysteresis width (degrees C).
+        hyst_hum: Humidity hysteresis width (percent).
+
+    Returns:
+        (new_temp, new_humidity, new_outputs) — all clamped to DHT11 ranges.
+    """
+    new_outputs = {
+        "fan": outputs.get("fan", False),
+        "humidifier": outputs.get("humidifier", False),
+        "heater": outputs.get("heater", False),
+    }
+
+    if not control_enabled:
+        # ── Control disabled: all relays OFF, free random walk ─────────
+        # The real firmware calls relays_off() when control is disabled.
+        # Sensors continue to be sampled but no actuators are driven.
+        new_outputs["fan"] = False
+        new_outputs["humidifier"] = False
+        new_outputs["heater"] = False
+
+        temp += random.uniform(-0.5, 0.5)
+        humidity += random.uniform(-0.5, 0.5)
+    else:
+        # ── Humidity hysteresis ────────────────────────────────────────
+        hum_set = setpoints["humidity"]
+        if humidity < hum_set:
+            # Zone 1: below setpoint → humidifier ON, humidity rises
+            new_outputs["humidifier"] = True
+            new_outputs["fan"] = False
+            humidity += random.uniform(0.5, 1.5)
+        elif humidity >= hum_set + hyst_hum:
+            # Zone 3: above setpoint + hyst → fan ON, humidity drops
+            new_outputs["humidifier"] = False
+            new_outputs["fan"] = True
+            humidity += random.uniform(-1.0, -0.3)
+        else:
+            # Zone 2: hysteresis band → no output change, small drift
+            humidity += random.uniform(-0.3, 0.3)
+
+        # ── Temperature hysteresis ─────────────────────────────────────
+        temp_set = setpoints["temperature"]
+        if temp < temp_set:
+            # Zone 1: below setpoint → heater ON, temp rises
+            new_outputs["heater"] = True
+            temp += random.uniform(0.3, 0.8)
+        elif temp >= temp_set + hyst_temp:
+            # Zone 3: above setpoint + hyst → heater OFF, temp drifts down
+            new_outputs["heater"] = False
+            temp += random.uniform(-0.5, -0.1)
+        else:
+            # Zone 2: hysteresis band → no output change, small drift
+            temp += random.uniform(-0.3, 0.3)
+
+    # Clamp to DHT11 physical ranges
+    temp = max(DHT11_TEMP_MIN, min(DHT11_TEMP_MAX, temp))
+    humidity = max(DHT11_HUM_MIN, min(DHT11_HUM_MAX, humidity))
+
+    return temp, humidity, new_outputs
+
 
 class SimulationEngine:
-    """Random-walk sensor simulator for a single unit.
+    """Hysteresis-based sensor simulator for a single unit.
 
     Runs as an async background task, updating the unit's sensor values
-    every `tick_interval` seconds. The random walk is bounded so readings
-    stay in a realistic range for mushroom cultivation.
+    and relay states every `tick_interval` seconds. The hysteresis loop
+    produces a characteristic sawtooth oscillation around setpoints —
+    the same pattern the real Pico firmware generates.
+
+    NestJS equivalent: a @Cron() service that calls control_loop() logic.
     """
 
     def __init__(
         self,
         state: UnitState,
         tick_interval: float = 2.0,
-        temp_min: float = 20.0,
-        temp_max: float = 28.0,
-        hum_min: float = 70.0,
-        hum_max: float = 90.0,
     ) -> None:
         self.state = state
         self.tick_interval = tick_interval
-        self.temp_min = temp_min
-        self.temp_max = temp_max
-        self.hum_min = hum_min
-        self.hum_max = hum_max
         self._running = False
         self._task: asyncio.Task[None] | None = None
 
     async def tick(self) -> None:
-        """One simulation step: random-walk temperature and humidity.
+        """One simulation step: run hysteresis and update state.
 
-        The walk is symmetric (equal chance of going up or down) with
-        configurable step sizes. Values are clamped to stay within
-        realistic bounds.
+        Reads current sensor values, setpoints, and control config from
+        the unit state, runs the hysteresis algorithm, and writes back
+        the new sensor values and relay states.
         """
-        # Temperature: +/- 0.5 degrees per tick
-        # DHT11 returns integers — round to match real hardware behavior.
-        temp = self.state._sensors["temperature"]
-        if temp is not None:
-            temp += random.uniform(-0.5, 0.5)
-            temp = max(self.temp_min, min(self.temp_max, temp))
-            self.state._sensors["temperature"] = int(round(temp))
+        s = self.state
 
-        # Humidity: +/- 1% per tick
-        # DHT11 returns integers — server DTO requires @IsInt() on humidity.
-        hum = self.state._sensors["humidity"]
-        if hum is not None:
-            hum += random.uniform(-1.0, 1.0)
-            hum = max(self.hum_min, min(self.hum_max, hum))
-            self.state._sensors["humidity"] = int(round(hum))
+        new_temp, new_hum, new_outputs = compute_hysteresis_tick(
+            temp=float(s._sensors["temperature"]),
+            humidity=float(s._sensors["humidity"]),
+            outputs=s._outputs,
+            setpoints=s.setpoints,
+            control_enabled=s.control_enabled,
+            hyst_temp=s.control_config["hyst_temp"],
+            hyst_hum=s.control_config["hyst_hum"],
+        )
+
+        # Write back — DHT11 returns integers, so round to match real hardware
+        s._sensors["temperature"] = int(round(new_temp))
+        s._sensors["humidity"] = int(round(new_hum))
+        s._outputs.update(new_outputs)
 
         # Reset the "age" counter (sensor was just read)
-        self.state._sensors["last_ok_age_s"] = 0
-        self.state._sensors["last_error"] = None
+        s._sensors["last_ok_age_s"] = 0
+        s._sensors["last_error"] = None
 
     async def run(self) -> None:
         """Main loop: tick every `tick_interval` seconds until stopped.
@@ -105,47 +208,3 @@ class SimulationEngine:
         if self._task is not None:
             self._task.cancel()
             self._task = None
-
-
-def seed_readings(state: UnitState, days: int) -> list[dict]:
-    """Generate backdated synthetic readings for historical data.
-
-    This fast-forwards the random walk simulation to produce `days` worth
-    of readings at 60-second intervals. The readings are returned as a list
-    of dicts (not POSTed to the server since there's no direct readings
-    endpoint — the server only ingests readings via cron polling GET /).
-
-    Useful for demos: run with --seed-days 14 to show 2 weeks of data.
-
-    Returns:
-        List of {"timestamp": str, "temperature": float, "humidity": float}
-    """
-    import datetime
-
-    readings: list[dict] = []
-    temp = 24.0
-    hum = 80.0
-    now = datetime.datetime.now()  # noqa: DTZ005
-    start = now - datetime.timedelta(days=days)
-    total_seconds = days * 86400
-
-    for offset in range(0, total_seconds, 60):
-        # Random walk (same bounds as the live simulation)
-        temp += random.uniform(-0.5, 0.5)
-        temp = max(20.0, min(28.0, temp))
-        hum += random.uniform(-1.0, 1.0)
-        hum = max(70.0, min(90.0, hum))
-
-        ts = start + datetime.timedelta(seconds=offset)
-        readings.append({
-            "timestamp": ts.isoformat(),
-            "temperature": int(round(temp)),
-            "humidity": int(round(hum)),
-        })
-
-    # Update the live state to the final values so the simulation
-    # continues from where the seed left off
-    state._sensors["temperature"] = int(round(temp))
-    state._sensors["humidity"] = int(round(hum))
-
-    return readings

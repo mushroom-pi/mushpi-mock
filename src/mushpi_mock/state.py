@@ -57,7 +57,17 @@ class UnitState:
         }
 
         # ── Setpoints (mirrors firmware's setpoints dict) ──
-        self.setpoints: dict[str, int] = {"temperature": 25, "humidity": 60}
+        # Humidity setpoint=80 matches the simulation's 70-90 range so the
+        # hysteresis sawtooth oscillates meaningfully out of the box.
+        self.setpoints: dict[str, int] = {"temperature": 25, "humidity": 80}
+
+        # ── Control loop config (mirrors firmware's control dict) ──
+        # hyst_temp=1 and hyst_hum=5 match the firmware defaults in config_loader.py.
+        self.control_config: dict[str, int] = {
+            "period_s": 5,
+            "hyst_temp": 1,
+            "hyst_hum": 5,
+        }
 
         # ── Devices / GPIO setup (mirrors firmware's devices dict) ──
         self.devices: dict[str, Any] = {
@@ -172,6 +182,7 @@ class UnitState:
             "outputs": dict(self._outputs),
             "setpoints": dict(self.setpoints),
             "control_loop_enabled": self.control_enabled,
+            "control": dict(self.control_config),
         }
 
     # ── Simulation tick ───────────────────────────────────────────────────

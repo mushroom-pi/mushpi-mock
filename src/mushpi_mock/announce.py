@@ -13,10 +13,17 @@ NestJS mapping:
     NestJS equivalent for the retry pattern:
         async announceWithRetry() {
             for (const delay of [5000, 10000, 30000, 60000]) {
-                try { await this.http.post(url, payload); return; }
+                try {
+                    const resp = await this.http.post(url, payload);
+                    return resp.data;  // PicoUnit object with .id
+                }
                 catch { await sleep(delay); }
             }
         }
+
+    The server responds with the full PicoUnit object (including `id`).
+    We parse `resp.json()['id']` to get the database-assigned unit ID,
+    which is needed for seeding readings directly into SQLite.
 """
 
 from __future__ import annotations
@@ -35,10 +42,11 @@ async def announce_once(
     state: UnitState,
     server_url: str,
     hub_secret: str = "mushpi-dev-secret",
-) -> bool:
+) -> tuple[bool, int | None]:
     """One-shot POST to the server's announce endpoint.
 
-    Returns True on HTTP 2xx, False otherwise.
+    Returns (success, pico_unit_id). On HTTP 2xx, parses the response body
+    for the unit's database ID. On failure, returns (False, None).
 
     The payload shape must match AnnouncePicoUnitDto on the server:
         - handle (required): unit name
@@ -75,43 +83,49 @@ async def announce_once(
                 },
             )
             if 200 <= resp.status_code < 300:
-                print(f"  [{state.handle}] Announced successfully to {url}")
-                return True
+                # Server returns the full PicoUnit object — extract the ID
+                body = resp.json()
+                unit_id: int | None = body.get("id")
+                print(f"  [{state.handle}] Announced successfully to {url} "
+                      f"(unit_id={unit_id})")
+                return True, unit_id
             else:
                 print(
                     f"  [{state.handle}] Announce failed: HTTP {resp.status_code}"
                 )
-                return False
+                return False, None
     except Exception as e:
         print(f"  [{state.handle}] Announce error: {e}")
-        return False
+        return False, None
 
 
 async def announce_with_retry(
     state: UnitState,
     server_url: str,
     hub_secret: str = "mushpi-dev-secret",
-) -> None:
+) -> tuple[bool, int | None]:
     """Announce with exponential backoff retry.
 
     Tries immediately, then retries with increasing delays:
     5s → 10s → 30s → 60s (cap).
+
+    Returns (success, pico_unit_id). Callers that don't need the ID can
+    ignore the second element of the tuple.
 
     This runs as a background task — it doesn't block the HTTP server
     from starting. The real Pico does the same: it starts the HTTP
     server while the announce runs in a separate uasyncio task.
 
     NestJS equivalent:
-        @Cron(CronExpression.EVERY_30_SECONDS)  // not exactly, but similar
-        // Or more accurately, an async bootstrap hook:
         async onModuleInit() {
-            this.announceWithRetry().catch(() => {});
+            const result = await this.announceWithRetry();
+            // result = { ok: boolean, unitId: number | null }
         }
     """
     for attempt, delay in enumerate(_BACKOFF_SCHEDULE):
-        ok = await announce_once(state, server_url, hub_secret)
+        ok, unit_id = await announce_once(state, server_url, hub_secret)
         if ok:
-            return
+            return True, unit_id
 
         if attempt < len(_BACKOFF_SCHEDULE) - 1:
             print(
@@ -123,3 +137,4 @@ async def announce_with_retry(
         f"  [{state.handle}] All announce attempts failed. "
         f"Server may not know about this unit."
     )
+    return False, None

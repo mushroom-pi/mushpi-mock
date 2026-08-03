@@ -47,6 +47,10 @@ class MockConfig(BaseModel):
         default="mushpi-dev-secret",
         description="Shared secret sent as X-Pico-Secret header on announce",
     )
+    db_path: str | None = Field(
+        default=None,
+        description="Path to server's SQLite DB (required for --seed-days)",
+    )
     units: list[UnitConfig] = Field(
         default_factory=lambda: [UnitConfig()],
         description="List of mock units to run",

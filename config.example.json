@@ -1,6 +1,7 @@
 {
   "server_url": "http://localhost:3000",
   "hub_secret": "mushpi-dev-secret",
+  "db_path": "../mushpi-server/data/app.sqlite",
   "units": [
     { "handle": "mock-tent-1", "port": 5000 },
     { "handle": "mock-tent-2", "port": 5001 },

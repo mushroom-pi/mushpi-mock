@@ -74,6 +74,26 @@ echo "Versions aligned: $mock_ver"
 - **Docstrings** on every module, class, and non-trivial function
 - **NestJS analogies** in module docstrings to help the TypeScript-savvy developer
 
+## Simulation Fidelity — CRITICAL
+
+The mock must produce **business-valuable data**, not noise. A real Pico running the hysteresis control loop produces a characteristic sawtooth oscillation around setpoints:
+
+- **Humidity**: drops naturally over time → when below setpoint, humidifier ON → humidity rises → when above setpoint + hyst, fan ON, humidifier OFF → humidity drops. Repeat.
+- **Temperature**: drops naturally → below setpoint, heater ON → rises → above setpoint + hyst, heater OFF. Repeat.
+
+**The mock must simulate this hysteresis loop**, both in the live `SimulationEngine.tick()` and in the `seed_readings()` backdated data generator. A random walk without hysteresis produces flat noise that is useless for dashboards, charts, and demos — the frontend will show no meaningful patterns.
+
+### Hysteresis simulation rules
+
+- Setpoints define the targets (e.g., 25°C, 85% RH)
+- `hyst_hum` = 5 (from firmware default), `hyst_temp` = 1
+- When humidity < setpoint: `humidifier_on = true`, `fan_on = false`, humidity trends **up** (+0.5 to +1.5 per tick)
+- When humidity ≥ setpoint + hyst_hum: `humidifier_on = false`, `fan_on = true`, humidity trends **down** (-1.0 to -0.3 per tick)
+- In between setpoint and setpoint + hyst: no output change, humidity drifts ±0.5
+- Same pattern for temperature with heater (temp < setpoint → heater ON → temp rises; temp ≥ setpoint + hyst → heater OFF → temp drifts down)
+- When `control_loop_enabled = false`: all relays OFF, sensors drift freely (random walk)
+- All values stay clamped within DHT11 range (temp 0–50°C, humidity 10–90%)
+
 ## NestJS Pattern Mappings
 
 | NestJS | mushpi-mock equivalent |

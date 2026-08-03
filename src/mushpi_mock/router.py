@@ -79,15 +79,21 @@ class OutputsDto(BaseModel):
 
 
 class ControlDto(BaseModel):
-    """POST /control body — enable/disable the control loop.
+    """POST /control body — enable/disable the control loop + hysteresis config.
 
     NestJS equivalent:
         class ControlDto {
             @IsBoolean() enabled: boolean;
+            @IsOptional() @IsInt() period_s?: number;
+            @IsOptional() @IsInt() hyst_temp?: number;
+            @IsOptional() @IsInt() hyst_hum?: number;
         }
     """
 
-    enabled: bool
+    enabled: bool | None = None
+    period_s: int | None = Field(None, ge=1, description="Control loop period in seconds")
+    hyst_temp: int | None = Field(None, ge=0, description="Temperature hysteresis degrees")
+    hyst_hum: int | None = Field(None, ge=0, description="Humidity hysteresis percentage")
 
 
 class PinsDto(BaseModel):
@@ -256,23 +262,46 @@ async def update_outputs(request: Request, dto: OutputsDto) -> dict[str, Any]:
 
 
 @router.get("/control")
-async def get_control(request: Request) -> dict[str, bool]:
-    """Get control loop enabled/disabled state."""
+async def get_control(request: Request) -> dict[str, Any]:
+    """Get control loop state: enabled flag + hysteresis configuration.
+
+    Returns enabled, period_s, hyst_temp, hyst_hum — matching the firmware's
+    control dict that the server stores when polling GET /.
+    """
     state = _get_state(request)
-    return {"enabled": state.control_enabled}
+    return {
+        "enabled": state.control_enabled,
+        "period_s": state.control_config["period_s"],
+        "hyst_temp": state.control_config["hyst_temp"],
+        "hyst_hum": state.control_config["hyst_hum"],
+    }
 
 
 @router.post("/control")
 @router.put("/control")
-async def update_control(request: Request, dto: ControlDto) -> dict[str, bool]:
-    """Enable or disable the control loop.
+async def update_control(request: Request, dto: ControlDto) -> dict[str, Any]:
+    """Enable/disable the control loop and/or update hysteresis parameters.
 
     The firmware calls relays_off() when disabling. We just update the flag.
+    All fields are optional — only provided fields are updated (partial PATCH).
     """
     state = _get_state(request)
-    state.control_enabled = dto.enabled
-    print(f"  [{state.handle}] Control loop: {dto.enabled}")
-    return {"enabled": dto.enabled}
+    if dto.enabled is not None:
+        state.control_enabled = dto.enabled
+    if dto.period_s is not None:
+        state.control_config["period_s"] = dto.period_s
+    if dto.hyst_temp is not None:
+        state.control_config["hyst_temp"] = dto.hyst_temp
+    if dto.hyst_hum is not None:
+        state.control_config["hyst_hum"] = dto.hyst_hum
+    print(f"  [{state.handle}] Control updated: enabled={state.control_enabled}, "
+          f"config={state.control_config}")
+    return {
+        "enabled": state.control_enabled,
+        "period_s": state.control_config["period_s"],
+        "hyst_temp": state.control_config["hyst_temp"],
+        "hyst_hum": state.control_config["hyst_hum"],
+    }
 
 
 # ── Setup endpoints ───────────────────────────────────────────────────────
