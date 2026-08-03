@@ -238,7 +238,14 @@ def cli() -> None:
     "--seed-days",
     type=int,
     default=0,
-    help="Generate N days of backdated readings on startup (requires db_path in config)",
+    help="Generate N days of backdated readings on startup (requires --db-path or db_path in config)",
+)
+@click.option(
+    "--db-path",
+    "-d",
+    type=str,
+    default=None,
+    help="Path to server's SQLite DB (required for --seed-days)",
 )
 def start(
     config: str | None,
@@ -246,6 +253,7 @@ def start(
     handles: list[str] | None,
     base_port: int,
     seed_days: int,
+    db_path: str | None,
 ) -> None:
     """Start one or more mock Pico units.
 
@@ -265,7 +273,7 @@ def start(
             UnitConfig(handle=h, port=base_port + i)
             for i, h in enumerate(handles)
         ]
-        cfg = MockConfig(units=units)
+        cfg = MockConfig(units=units, db_path=db_path)
 
     print(f"Starting {len(cfg.units)} mock unit(s)...")
     for u in cfg.units:
