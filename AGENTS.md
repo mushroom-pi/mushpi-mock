@@ -85,12 +85,17 @@ The mock must produce **business-valuable data**, not noise. A real Pico running
 
 ### Hysteresis simulation rules
 
-- Setpoints define the targets (e.g., 25°C, 85% RH)
+- Setpoints define the targets (e.g., 25°C, 80% RH)
 - `hyst_hum` = 5 (from firmware default), `hyst_temp` = 1
-- When humidity < setpoint: `humidifier_on = true`, `fan_on = false`, humidity trends **up** (+0.5 to +1.5 per tick)
-- When humidity ≥ setpoint + hyst_hum: `humidifier_on = false`, `fan_on = true`, humidity trends **down** (-1.0 to -0.3 per tick)
-- In between setpoint and setpoint + hyst: no output change, humidity drifts ±0.5
-- Same pattern for temperature with heater (temp < setpoint → heater ON → temp rises; temp ≥ setpoint + hyst → heater OFF → temp drifts down)
+- **Humidity (asymmetric deadband above target)**:
+  - When humidity ≤ setpoint: `humidifier_on = true`, `fan_on = false`, humidity trends **up** (+0.5 to +1.5 per tick). The humidifier chases the target aggressively — no lower hysteresis boundary.
+  - When humidity > setpoint + hyst_hum: `humidifier_on = false`, `fan_on = true`, humidity trends **down** (-1.0 to -0.3 per tick). The fan only engages once humidity overshoots by the full hysteresis width.
+  - When setpoint < humidity ≤ setpoint + hyst_hum: both OFF — natural deadband, humidity drifts ±0.3.
+  - Humidifier and fan are mutually exclusive (safety off-calls when engaging either).
+- **Temperature (bang-bang, no hysteresis band)**:
+  - When temperature ≤ setpoint: `heater_on = true`, temp trends **up** (+0.3 to +0.8 per tick).
+  - When temperature > setpoint: `heater_on = false`, temp trends **down** (-0.5 to -0.1 per tick).
+  - Thermal lag in the drift rates produces natural oscillation around the setpoint.
 - When `control_loop_enabled = false`: all relays OFF, sensors drift freely (random walk)
 - All values stay clamped within DHT11 range (temp 0–50°C, humidity 10–90%)
 

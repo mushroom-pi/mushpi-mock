@@ -23,7 +23,7 @@ from typing import Any
 # Must match mushpi-grow/app/state.py::_SOFTWARE_VERSION (the source of truth).
 # Also keep src/mushpi_mock/VERSION in sync — it's a plain-text version file
 # used for automated checks between the two repos.
-_SOFTWARE_VERSION = "0.6.0"
+_SOFTWARE_VERSION = "0.7.0"
 
 
 class UnitState:

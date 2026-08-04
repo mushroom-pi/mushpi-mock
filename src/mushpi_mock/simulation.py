@@ -9,17 +9,24 @@ NestJS mapping:
     Here we use asyncio.create_task() with asyncio.sleep() instead.
 
 The simulation produces realistic sawtooth oscillation around setpoints,
-matching the real Pico's hysteresis control loop behavior:
+matching the real Pico's simplified hysteresis control loop (v0.7.0+):
 
-    Humidity:
-        below setpoint        → humidifier ON → humidity rises (+0.5 to +1.5/tick)
-        above setpoint + hyst → fan ON        → humidity drops (-1.0 to -0.3/tick)
-        in between            → no change      → drift ±0.3
+    Humidity (asymmetric deadband):
+        humidity <= target           → humidifier ON, fan OFF → humidity rises
+        humidity > target + hyst_hum → fan ON, humidifier OFF → humidity drops
+        target < humidity <= target + hyst_hum → both OFF    → natural drift
 
-    Temperature:
-        below setpoint        → heater ON  → temp rises (+0.3 to +0.8/tick)
-        above setpoint + hyst → heater OFF → temp drops (-0.5 to -0.1/tick)
-        in between            → no change   → drift ±0.3
+        The humidifier chases the target aggressively (no lower hysteresis
+        boundary). The fan only engages once humidity overshoots by hyst_hum.
+        This creates a natural deadband of width hyst_hum above the target
+        where neither actuator runs.
+
+    Temperature (bang-bang):
+        temperature <= target → heater ON  → temp rises
+        temperature > target  → heater OFF → temp drifts down
+
+        No hysteresis band for temperature — the thermal lag in the drift
+        rates produces natural oscillation around the setpoint.
 
     When control_loop_enabled = false: all relays OFF, free random walk.
 
@@ -58,10 +65,19 @@ def compute_hysteresis_tick(
     This is a **pure function** (no side effects, no state mutation) so it
     can be reused by both the live simulation engine and the seed generator.
 
-    The three-zone hysteresis matches the real firmware's control_loop():
-        Zone 1 (below setpoint):          actuator ON  → value moves toward setpoint
-        Zone 2 (setpoint to setpoint+hyst): hold zone  → value drifts slightly
-        Zone 3 (above setpoint+hyst):     actuator OFF → value moves away
+    The simplified algorithm (v0.7.0+) uses two independent control loops:
+
+    Humidity — asymmetric deadband above target:
+        humidity <= target           → humidifier ON, fan OFF (aggressive chase)
+        humidity > target + hyst_hum → fan ON, humidifier OFF (overshoot correction)
+        target < humidity <= target + hyst_hum → both OFF (natural deadband)
+
+    Temperature — bang-bang (no hysteresis band):
+        temperature <= target → heater ON  (temp rises toward setpoint)
+        temperature > target  → heater OFF (temp drifts down naturally)
+
+    The humidifier and fan are mutually exclusive — engaging either one
+    forces the other OFF as a safety measure (matching firmware behavior).
 
     Args:
         temp: Current temperature reading.
@@ -69,8 +85,10 @@ def compute_hysteresis_tick(
         outputs: Current relay states {"fan": bool, "humidifier": bool, "heater": bool}.
         setpoints: Target values {"temperature": int, "humidity": int}.
         control_enabled: Whether the control loop is active.
-        hyst_temp: Temperature hysteresis width (degrees C).
-        hyst_hum: Humidity hysteresis width (percent).
+        hyst_temp: Temperature hysteresis width (degrees C) — unused in new
+                   algorithm but kept for API compatibility with config.
+        hyst_hum: Humidity hysteresis width (percent) — defines the deadband
+                  above the humidity target.
 
     Returns:
         (new_temp, new_humidity, new_outputs) — all clamped to DHT11 ranges.
@@ -92,35 +110,40 @@ def compute_hysteresis_tick(
         temp += random.uniform(-0.5, 0.5)
         humidity += random.uniform(-0.5, 0.5)
     else:
-        # ── Humidity hysteresis ────────────────────────────────────────
+        # ── Humidity control (asymmetric deadband) ─────────────────────
+        # Humidifier chases target aggressively (no lower boundary).
+        # Fan only engages once humidity overshoots by hyst_hum.
+        # Between target and target+hyst_hum: neither runs (deadband).
         hum_set = setpoints["humidity"]
-        if humidity < hum_set:
-            # Zone 1: below setpoint → humidifier ON, humidity rises
+        if humidity <= hum_set:
+            # At or below target → humidifier ON, fan OFF (safety)
             new_outputs["humidifier"] = True
             new_outputs["fan"] = False
             humidity += random.uniform(0.5, 1.5)
-        elif humidity >= hum_set + hyst_hum:
-            # Zone 3: above setpoint + hyst → fan ON, humidity drops
+        elif humidity > hum_set + hyst_hum:
+            # Above target + hysteresis → fan ON, humidifier OFF (safety)
             new_outputs["humidifier"] = False
             new_outputs["fan"] = True
             humidity += random.uniform(-1.0, -0.3)
         else:
-            # Zone 2: hysteresis band → no output change, small drift
+            # Deadband: target < humidity <= target + hyst_hum
+            # Neither actuator runs; humidity drifts naturally
+            new_outputs["humidifier"] = False
+            new_outputs["fan"] = False
             humidity += random.uniform(-0.3, 0.3)
 
-        # ── Temperature hysteresis ─────────────────────────────────────
+        # ── Temperature control (bang-bang) ────────────────────────────
+        # Simple threshold: heater ON at/below target, OFF above.
+        # Thermal lag in drift rates produces natural oscillation.
         temp_set = setpoints["temperature"]
-        if temp < temp_set:
-            # Zone 1: below setpoint → heater ON, temp rises
+        if temp <= temp_set:
+            # At or below target → heater ON, temp rises
             new_outputs["heater"] = True
             temp += random.uniform(0.3, 0.8)
-        elif temp >= temp_set + hyst_temp:
-            # Zone 3: above setpoint + hyst → heater OFF, temp drifts down
+        else:
+            # Above target → heater OFF, temp drifts down
             new_outputs["heater"] = False
             temp += random.uniform(-0.5, -0.1)
-        else:
-            # Zone 2: hysteresis band → no output change, small drift
-            temp += random.uniform(-0.3, 0.3)
 
     # Clamp to DHT11 physical ranges
     temp = max(DHT11_TEMP_MIN, min(DHT11_TEMP_MAX, temp))
