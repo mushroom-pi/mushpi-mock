@@ -8,25 +8,32 @@ NestJS mapping:
         handleCron() { this.simulateTick(); }
     Here we use asyncio.create_task() with asyncio.sleep() instead.
 
-The simulation produces realistic sawtooth oscillation around setpoints,
-matching the real Pico's simplified hysteresis control loop (v0.7.0+):
+The simulation produces realistic bi-directional sawtooth oscillation around
+setpoints, matching the real Pico's hysteresis control loop with symmetric
+deadbands (v0.7.0+):
 
-    Humidity (asymmetric deadband):
-        humidity <= target           → humidifier ON, fan OFF → humidity rises
-        humidity > target + hyst_hum → fan ON, humidifier OFF → humidity drops
-        target < humidity <= target + hyst_hum → both OFF    → natural drift
+    Humidity (symmetric deadband ±6%):
+        humidity <= target - 6       → humidifier ON, fan OFF → humidity rises
+        humidity > target + 6        → fan ON, humidifier OFF → humidity drops
+        target - 6 < humidity <= target + 6 → both OFF → wide natural drift
 
-        The humidifier chases the target aggressively (no lower hysteresis
-        boundary). The fan only engages once humidity overshoots by hyst_hum.
-        This creates a natural deadband of width hyst_hum above the target
-        where neither actuator runs.
+        The wide symmetric deadband lets humidity explore the full ±6% range
+        around the setpoint before an actuator engages. Within the deadband,
+        large random drifts (±1.2 per tick) produce visible oscillation on
+        dashboards.
 
-    Temperature (bang-bang):
-        temperature <= target → heater ON  → temp rises
-        temperature > target  → heater OFF → temp drifts down
+    Temperature (symmetric deadband ±2°C):
+        temperature <= target - 2    → heater ON  → temp rises
+        temperature > target + 2     → heater OFF → temp drifts down
+        target - 2 < temp <= target + 2 → heater OFF → wide natural drift
 
-        No hysteresis band for temperature — the thermal lag in the drift
-        rates produces natural oscillation around the setpoint.
+        The wide symmetric deadband lets temperature explore the full ±2°C
+        range around the setpoint. Within the deadband, large random drifts
+        (±0.6 per tick) produce visible oscillation on dashboards.
+
+    Cross-coupling (physical realism):
+        Humidifier ON → evaporative cooling lowers temperature slightly.
+        Heater ON → warm air drying lowers relative humidity slightly.
 
     When control_loop_enabled = false: all relays OFF, free random walk.
 
@@ -41,6 +48,34 @@ import asyncio
 import random
 
 from .state import UnitState
+
+# ── Simulation tuning constants ──────────────────────────────────
+# Deadband widths: how far from target before correction engages
+TEMP_DEADBAND = 2.0      # ±2°C around setpoint
+HUM_DEADBAND = 6.0       # ±6% around setpoint
+
+# Drift within deadband (per tick, additive)
+TEMP_DRIFT_MIN = -0.6    # max negative drift per tick
+TEMP_DRIFT_MAX = 0.6     # max positive drift per tick
+HUM_DRIFT_MIN = -1.2     # max negative drift per tick
+HUM_DRIFT_MAX = 1.2      # max positive drift per tick
+
+# Correction step sizes (per tick, additive)
+TEMP_HEAT_STEP_MIN = 0.2
+TEMP_HEAT_STEP_MAX = 0.6
+TEMP_COOL_STEP_MIN = -0.6
+TEMP_COOL_STEP_MAX = -0.2
+
+HUM_RISE_STEP_MIN = 0.3
+HUM_RISE_STEP_MAX = 0.7
+HUM_FALL_STEP_MIN = -0.8
+HUM_FALL_STEP_MAX = -0.3
+
+# Cross-coupling effects (per tick, additive)
+EVAP_COOL_MIN = 0.05     # humidifier cools air
+EVAP_COOL_MAX = 0.2
+HEATER_DRY_MIN = 0.1     # heater dries air
+HEATER_DRY_MAX = 0.3
 
 # ── DHT11 physical limits ──────────────────────────────────────────────────
 # The real sensor can't report outside these ranges. We clamp to prevent
@@ -65,16 +100,28 @@ def compute_hysteresis_tick(
     This is a **pure function** (no side effects, no state mutation) so it
     can be reused by both the live simulation engine and the seed generator.
 
-    The simplified algorithm (v0.7.0+) uses two independent control loops:
+    All tuning parameters (deadband widths, drift amplitudes, correction
+    step sizes, cross-coupling effects) are defined as module-level
+    constants at the top of this file. See the ``TEMP_DEADBAND``,
+    ``HUM_DEADBAND``, ``TEMP_DRIFT_*``, ``HUM_DRIFT_*``, ``TEMP_HEAT_STEP_*``,
+    ``TEMP_COOL_STEP_*``, ``HUM_RISE_STEP_*``, ``HUM_FALL_STEP_*``,
+    ``EVAP_COOL_*``, and ``HEATER_DRY_*`` constants.
 
-    Humidity — asymmetric deadband above target:
-        humidity <= target           → humidifier ON, fan OFF (aggressive chase)
-        humidity > target + hyst_hum → fan ON, humidifier OFF (overshoot correction)
-        target < humidity <= target + hyst_hum → both OFF (natural deadband)
+    The algorithm uses two independent symmetric deadband control loops:
 
-    Temperature — bang-bang (no hysteresis band):
-        temperature <= target → heater ON  (temp rises toward setpoint)
-        temperature > target  → heater OFF (temp drifts down naturally)
+    Humidity — symmetric deadband (±6%, see ``HUM_DEADBAND``):
+        humidity <= target - 6       → humidifier ON, fan OFF (humidity rises)
+        humidity > target + 6        → fan ON, humidifier OFF (humidity drops)
+        target ± 6                   → both OFF (wide natural drift ±1.2)
+
+    Temperature — symmetric deadband (±2°C, see ``TEMP_DEADBAND``):
+        temperature <= target - 2    → heater ON  (temp rises toward setpoint)
+        temperature > target + 2     → heater OFF (temp drifts down naturally)
+        target ± 2                   → heater OFF (wide natural drift ±0.6)
+
+    Cross-coupling (physical realism):
+        Humidifier ON → evaporative cooling lowers temp slightly.
+        Heater ON → warm air drying lowers humidity slightly.
 
     The humidifier and fan are mutually exclusive — engaging either one
     forces the other OFF as a safety measure (matching firmware behavior).
@@ -86,9 +133,9 @@ def compute_hysteresis_tick(
         setpoints: Target values {"temperature": int, "humidity": int}.
         control_enabled: Whether the control loop is active.
         hyst_temp: Temperature hysteresis width (degrees C) — unused in new
-                   algorithm but kept for API compatibility with config.
-        hyst_hum: Humidity hysteresis width (percent) — defines the deadband
-                  above the humidity target.
+                   symmetric deadband algorithm but kept for API compatibility.
+        hyst_hum: Humidity hysteresis width (percent) — unused in new
+                  symmetric deadband algorithm but kept for API compatibility.
 
     Returns:
         (new_temp, new_humidity, new_outputs) — all clamped to DHT11 ranges.
@@ -110,40 +157,46 @@ def compute_hysteresis_tick(
         temp += random.uniform(-0.5, 0.5)
         humidity += random.uniform(-0.5, 0.5)
     else:
-        # ── Humidity control (asymmetric deadband) ─────────────────────
-        # Humidifier chases target aggressively (no lower boundary).
-        # Fan only engages once humidity overshoots by hyst_hum.
-        # Between target and target+hyst_hum: neither runs (deadband).
+        # ── Control enabled: symmetric deadband hysteresis ───────────
+        # Wide bi-directional deadbands let sensors swing both above and
+        # below the setpoint, producing visible oscillation on dashboards.
+        # Deadband widths and step sizes are module-level constants — see
+        # the top of this file for all tuning parameters.
+
+        # ── Humidity control (symmetric deadband) ────────────────────
         hum_set = setpoints["humidity"]
-        if humidity <= hum_set:
-            # At or below target → humidifier ON, fan OFF (safety)
+        if humidity <= hum_set - HUM_DEADBAND:
             new_outputs["humidifier"] = True
             new_outputs["fan"] = False
-            humidity += random.uniform(0.5, 1.5)
-        elif humidity > hum_set + hyst_hum:
-            # Above target + hysteresis → fan ON, humidifier OFF (safety)
+            humidity += random.uniform(HUM_RISE_STEP_MIN, HUM_RISE_STEP_MAX)
+        elif humidity > hum_set + HUM_DEADBAND:
             new_outputs["humidifier"] = False
             new_outputs["fan"] = True
-            humidity += random.uniform(-1.0, -0.3)
+            humidity += random.uniform(HUM_FALL_STEP_MIN, HUM_FALL_STEP_MAX)
         else:
-            # Deadband: target < humidity <= target + hyst_hum
-            # Neither actuator runs; humidity drifts naturally
+            # Wide drift within deadband = explores 74-86% range
             new_outputs["humidifier"] = False
             new_outputs["fan"] = False
-            humidity += random.uniform(-0.3, 0.3)
+            humidity += random.uniform(HUM_DRIFT_MIN, HUM_DRIFT_MAX)
 
-        # ── Temperature control (bang-bang) ────────────────────────────
-        # Simple threshold: heater ON at/below target, OFF above.
-        # Thermal lag in drift rates produces natural oscillation.
+        # ── Temperature control (symmetric deadband) ─────────────────
         temp_set = setpoints["temperature"]
-        if temp <= temp_set:
-            # At or below target → heater ON, temp rises
+        if temp <= temp_set - TEMP_DEADBAND:
             new_outputs["heater"] = True
-            temp += random.uniform(0.3, 0.8)
-        else:
-            # Above target → heater OFF, temp drifts down
+            temp += random.uniform(TEMP_HEAT_STEP_MIN, TEMP_HEAT_STEP_MAX)
+        elif temp > temp_set + TEMP_DEADBAND:
             new_outputs["heater"] = False
-            temp += random.uniform(-0.5, -0.1)
+            temp += random.uniform(TEMP_COOL_STEP_MIN, TEMP_COOL_STEP_MAX)
+        else:
+            # Wide drift within deadband = explores 23-27°C range
+            new_outputs["heater"] = False
+            temp += random.uniform(TEMP_DRIFT_MIN, TEMP_DRIFT_MAX)
+
+        # ── Cross-coupling (physical realism) ─────────────────────────
+        if new_outputs["humidifier"]:
+            temp -= random.uniform(EVAP_COOL_MIN, EVAP_COOL_MAX)   # evaporative cooling
+        if new_outputs["heater"]:
+            humidity -= random.uniform(HEATER_DRY_MIN, HEATER_DRY_MAX) # warm air drying
 
     # Clamp to DHT11 physical ranges
     temp = max(DHT11_TEMP_MIN, min(DHT11_TEMP_MAX, temp))

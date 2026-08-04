@@ -88,8 +88,8 @@ The mock must produce **business-valuable data**, not noise. A real Pico running
 - Setpoints define the targets (e.g., 25°C, 80% RH)
 - `hyst_hum` = 5 (from firmware default), `hyst_temp` = 1
 - **Humidity (asymmetric deadband above target)**:
-  - When humidity ≤ setpoint: `humidifier_on = true`, `fan_on = false`, humidity trends **up** (+0.5 to +1.5 per tick). The humidifier chases the target aggressively — no lower hysteresis boundary.
-  - When humidity > setpoint + hyst_hum: `humidifier_on = false`, `fan_on = true`, humidity trends **down** (-1.0 to -0.3 per tick). The fan only engages once humidity overshoots by the full hysteresis width.
+  - When humidity ≤ setpoint: `humidifier_on = true`, `fan_on = false`, humidity trends **up** (+0.4 to +1.1 per tick). The humidifier chases the target aggressively — no lower hysteresis boundary.
+  - When humidity > setpoint + hyst_hum: `humidifier_on = false`, `fan_on = true`, humidity trends **down** (-1.0 to -0.5 per tick). The fan only engages once humidity overshoots by the full hysteresis width.
   - When setpoint < humidity ≤ setpoint + hyst_hum: both OFF — natural deadband, humidity drifts ±0.3.
   - Humidifier and fan are mutually exclusive (safety off-calls when engaging either).
 - **Temperature (bang-bang, no hysteresis band)**:
