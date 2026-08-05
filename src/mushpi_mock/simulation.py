@@ -37,6 +37,18 @@ deadbands (v0.7.0+):
 
     When control_loop_enabled = false: all relays OFF, free random walk.
 
+Intentional omissions (firmware v0.8.0+):
+    As of firmware v0.8.0, the real Pico implements asymmetric deadband
+    (``humidity_deadband`` and ``temperature_deadband`` config keys) and
+    minimum relay runtime (``min_runtime`` config key). The mock
+    intentionally does NOT simulate these features. The mock's purpose is
+    REST API mirroring and demo data generation, not faithful control
+    dynamics replication. The existing symmetric deadband simulation
+    produces data that is visually adequate for dashboards — sawtooth
+    patterns look correct even though the underlying control logic differs.
+    See ``AGENTS.md`` § "Intentional Omissions (v0.8.0+)" for the full
+    rationale.
+
 The core logic lives in `compute_hysteresis_tick()` — a pure function shared
 by both the live SimulationEngine and the offline seed generator (seed.py).
 This avoids duplicating the hysteresis rules in two places.
@@ -126,6 +138,11 @@ def compute_hysteresis_tick(
     The humidifier and fan are mutually exclusive — engaging either one
     forces the other OFF as a safety measure (matching firmware behavior).
 
+    NOTE: As of firmware v0.8.0, the real Pico uses asymmetric deadbands
+    (``humidity_deadband``, ``temperature_deadband``) and a minimum relay
+    runtime gate (``min_runtime``). The mock does not simulate these —
+    see module-level docstring for rationale.
+
     Args:
         temp: Current temperature reading.
         humidity: Current humidity reading.
@@ -212,6 +229,10 @@ class SimulationEngine:
     and relay states every `tick_interval` seconds. The hysteresis loop
     produces a characteristic sawtooth oscillation around setpoints —
     the same pattern the real Pico firmware generates.
+
+    NOTE: The simulation uses symmetric deadbands and does not model the
+    asymmetric deadband or minimum relay runtime features added in
+    firmware v0.8.0. See module-level docstring for rationale.
 
     NestJS equivalent: a @Cron() service that calls control_loop() logic.
     """

@@ -99,6 +99,16 @@ The mock must produce **business-valuable data**, not noise. A real Pico running
 - When `control_loop_enabled = false`: all relays OFF, sensors drift freely (random walk)
 - All values stay clamped within DHT11 range (temp 0–50°C, humidity 10–90%)
 
+### Intentional Omissions (v0.8.0+)
+
+As of firmware v0.8.0, the real Pico 2W implements:
+- **Asymmetric deadband**: separate ON and OFF thresholds via `humidity_deadband` and `temperature_deadband` config keys. The humidifier turns ON at `target − deadband` (not at target), creating a no-action buffer zone.
+- **Minimum runtime**: a `min_runtime` gate (default 30s) that prevents a relay from turning OFF before it has been ON for the configured minimum duration, reducing actuator cycling.
+
+The mock does **not** simulate these features. The simulation uses wide symmetric deadbands (±6% humidity, ±2°C temperature) that produce visually similar sawtooth patterns on dashboards. Implementing faithful asymmetric deadband + min-runtime simulation would add significant complexity with negligible benefit for demo purposes. The mock's primary function is REST API mirroring, not control dynamics replication.
+
+If the mock's hysteresis simulation is ever rewritten to match a newer firmware version, these features should be considered for inclusion at that time.
+
 ## Seed Database Format — CRITICAL
 
 The `seed_readings()` function writes directly to the server's SQLite `readings` table. The `ts` column is a TEXT column, and **the server's readings queries use TypeORM string ordering** (`{ ts: 'ASC' }` / `{ ts: 'DESC' }`), not datetime-aware comparison.

@@ -87,6 +87,9 @@ class ControlDto(BaseModel):
             @IsOptional() @IsInt() period_s?: number;
             @IsOptional() @IsInt() hyst_temp?: number;
             @IsOptional() @IsInt() hyst_hum?: number;
+            @IsOptional() @IsInt() humidity_deadband?: number;
+            @IsOptional() @IsInt() temperature_deadband?: number;
+            @IsOptional() @IsInt() min_runtime?: number;
         }
     """
 
@@ -94,6 +97,9 @@ class ControlDto(BaseModel):
     period_s: int | None = Field(None, ge=1, description="Control loop period in seconds")
     hyst_temp: int | None = Field(None, ge=0, description="Temperature hysteresis degrees")
     hyst_hum: int | None = Field(None, ge=0, description="Humidity hysteresis percentage")
+    humidity_deadband: int | None = Field(None, ge=0, description="Humidity deadband (v0.8.0+)")
+    temperature_deadband: int | None = Field(None, ge=0, description="Temperature deadband (v0.8.0+)")
+    min_runtime: int | None = Field(None, ge=0, description="Minimum relay runtime seconds (v0.8.0+)")
 
 
 class PinsDto(BaseModel):
@@ -265,15 +271,13 @@ async def update_outputs(request: Request, dto: OutputsDto) -> dict[str, Any]:
 async def get_control(request: Request) -> dict[str, Any]:
     """Get control loop state: enabled flag + hysteresis configuration.
 
-    Returns enabled, period_s, hyst_temp, hyst_hum — matching the firmware's
+    Returns enabled plus all control_config keys — matching the firmware's
     control dict that the server stores when polling GET /.
     """
     state = _get_state(request)
     return {
         "enabled": state.control_enabled,
-        "period_s": state.control_config["period_s"],
-        "hyst_temp": state.control_config["hyst_temp"],
-        "hyst_hum": state.control_config["hyst_hum"],
+        **state.control_config,
     }
 
 
@@ -294,13 +298,17 @@ async def update_control(request: Request, dto: ControlDto) -> dict[str, Any]:
         state.control_config["hyst_temp"] = dto.hyst_temp
     if dto.hyst_hum is not None:
         state.control_config["hyst_hum"] = dto.hyst_hum
+    if dto.humidity_deadband is not None:
+        state.control_config["humidity_deadband"] = dto.humidity_deadband
+    if dto.temperature_deadband is not None:
+        state.control_config["temperature_deadband"] = dto.temperature_deadband
+    if dto.min_runtime is not None:
+        state.control_config["min_runtime"] = dto.min_runtime
     print(f"  [{state.handle}] Control updated: enabled={state.control_enabled}, "
           f"config={state.control_config}")
     return {
         "enabled": state.control_enabled,
-        "period_s": state.control_config["period_s"],
-        "hyst_temp": state.control_config["hyst_temp"],
-        "hyst_hum": state.control_config["hyst_hum"],
+        **state.control_config,
     }
 
 

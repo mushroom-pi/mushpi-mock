@@ -23,7 +23,7 @@ from typing import Any
 # Must match mushpi-grow/app/state.py::_SOFTWARE_VERSION (the source of truth).
 # Also keep src/mushpi_mock/VERSION in sync — it's a plain-text version file
 # used for automated checks between the two repos.
-_SOFTWARE_VERSION = "0.7.0"
+_SOFTWARE_VERSION = "0.8.0"
 
 
 class UnitState:
@@ -63,10 +63,15 @@ class UnitState:
 
         # ── Control loop config (mirrors firmware's control dict) ──
         # hyst_temp=1 and hyst_hum=5 match the firmware defaults in config_loader.py.
+        # humidity_deadband, temperature_deadband, and min_runtime are v0.8.0+ keys
+        # that the simulation does not use (see simulation.py module docstring).
         self.control_config: dict[str, int] = {
             "period_s": 5,
             "hyst_temp": 1,
             "hyst_hum": 5,
+            "humidity_deadband": 3,      # v0.8.0+ — not used by simulation
+            "temperature_deadband": 1,   # v0.8.0+ — not used by simulation
+            "min_runtime": 30,           # v0.8.0+ — not used by simulation
         }
 
         # ── Devices / GPIO setup (mirrors firmware's devices dict) ──
