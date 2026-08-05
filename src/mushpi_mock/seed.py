@@ -126,7 +126,7 @@ def seed_readings(
         #  board_uptime_s, board_temp, board_used_mem, board_used_fs,
         #  time_to_response_ms, pico_unit_id)
         rows.append((
-            ts.isoformat(),                  # ts (DATETIME)
+            ts.strftime('%Y-%m-%d %H:%M:%S'),  # ts (DATETIME) — matches server cron format
             temp_int,                        # temperature (FLOAT)
             hum_int,                         # humidity (INTEGER)
             None,                            # last_sensor_err (TEXT)

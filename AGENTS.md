@@ -99,6 +99,23 @@ The mock must produce **business-valuable data**, not noise. A real Pico running
 - When `control_loop_enabled = false`: all relays OFF, sensors drift freely (random walk)
 - All values stay clamped within DHT11 range (temp 0–50°C, humidity 10–90%)
 
+## Seed Database Format — CRITICAL
+
+The `seed_readings()` function writes directly to the server's SQLite `readings` table. The `ts` column is a TEXT column, and **the server's readings queries use TypeORM string ordering** (`{ ts: 'ASC' }` / `{ ts: 'DESC' }`), not datetime-aware comparison.
+
+**The seed MUST produce timestamps in the same format as the server's cron poller**, otherwise readings sort incorrectly across the `T`-to-space boundary and the dashboard shows phantom gaps:
+
+| Source | Format | Example |
+|--------|--------|---------|
+| Server cron | `YYYY-MM-DD HH:MM:SS` (space, no μs) | `2026-08-05 08:33:00` |
+| Seed (must match) | `YYYY-MM-DD HH:MM:SS` (space, no μs) | `2026-08-05 10:18:43` |
+
+**Never use `ts.isoformat()`** — it produces `2026-08-05T10:18:43.022726`. The `T` separator (ASCII 84) sorts differently from the space separator (ASCII 32), so space-separated and `T`-separated timestamps on the same date interleave incorrectly. The data is chronologically fine but string-sorted wrong — the dashboard shows an apparent multi-hour gap where none exists.
+
+**Always use**: `ts.strftime('%Y-%m-%d %H:%M:%S')`
+
+This is the single most common source of seed bugs and is hard to detect without checking the raw database format.
+
 ## NestJS Pattern Mappings
 
 | NestJS | mushpi-mock equivalent |
