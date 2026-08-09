@@ -268,17 +268,15 @@ async def update_outputs(request: Request, dto: OutputsDto) -> dict[str, Any]:
 
 
 @router.get("/control")
-async def get_control(request: Request) -> dict[str, Any]:
-    """Get control loop state: enabled flag + hysteresis configuration.
+async def get_control(request: Request) -> dict[str, bool]:
+    """Get control loop status — enabled flag only.
 
-    Returns enabled plus all control_config keys — matching the firmware's
-    control dict that the server stores when polling GET /.
+    The real Pico's GET /control returns {"enabled": true|false}.
+    The full control_config (hysteresis params, period, etc.) is internal
+    state used by POST /control, not exposed in the GET response.
     """
     state = _get_state(request)
-    return {
-        "enabled": state.control_enabled,
-        **state.control_config,
-    }
+    return {"enabled": state.control_enabled}
 
 
 @router.post("/control")

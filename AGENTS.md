@@ -109,6 +109,12 @@ The mock does **not** simulate these features. The simulation uses wide symmetri
 
 If the mock's hysteresis simulation is ever rewritten to match a newer firmware version, these features should be considered for inclusion at that time.
 
+### API Fidelity Rules
+
+- **`GET /` response shape** must match the real Pico's 8-key snapshot: `system`, `health`, `uptime`, `devices`, `sensors`, `outputs`, `setpoints`, `control_loop_enabled`. Do **not** include internal keys like `control` (config dict) in the full snapshot — those belong only on their dedicated endpoints.
+- **`GET /control` response** must return only `{"enabled": bool}` — the real Pico does not expose config fields (`period_s`, `hyst_temp`, etc.) through this endpoint.
+- **`POST /control`** must require the `enabled` key (not optional) and only accept `enabled` in the request body — the real Pico reads `period_s`/`hyst_*` from `config.json`, not from this endpoint.
+
 ## Seed Database Format — CRITICAL
 
 The `seed_readings()` function writes directly to the server's SQLite `readings` table. The `ts` column is a TEXT column, and **the server's readings queries use TypeORM string ordering** (`{ ts: 'ASC' }` / `{ ts: 'DESC' }`), not datetime-aware comparison.

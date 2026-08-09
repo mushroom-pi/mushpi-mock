@@ -23,7 +23,7 @@ from typing import Any
 # Must match mushpi-grow/app/state.py::_SOFTWARE_VERSION (the source of truth).
 # Also keep src/mushpi_mock/VERSION in sync — it's a plain-text version file
 # used for automated checks between the two repos.
-_SOFTWARE_VERSION = "0.8.0"
+_SOFTWARE_VERSION = "0.8.4"
 
 
 class UnitState:
@@ -187,7 +187,6 @@ class UnitState:
             "outputs": dict(self._outputs),
             "setpoints": dict(self.setpoints),
             "control_loop_enabled": self.control_enabled,
-            "control": dict(self.control_config),
         }
 
     # ── Simulation tick ───────────────────────────────────────────────────
