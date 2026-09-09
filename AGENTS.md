@@ -106,6 +106,15 @@ The `mushpi-mock` agent is triggered:
 3. Compare with existing mock code (skip if fresh build)
 4. Plan changes (identify files to touch, endpoints to add/update)
 5. Build/update the mock code
-6. Verify: start the mock, hit endpoints with curl/httpx
+6. Verify: run the version-alignment check, then start the mock and hit endpoints with curl/httpx (see **Verification** below)
 7. Update `VERSION` file and `_SOFTWARE_VERSION` if needed
 8. Report back to orchestrator with summary + verification results
+
+### Verification — what this repo actually supports
+
+There is **no** pytest/ruff/mypy test suite, linter, or type checker configured in this repo. `pyproject.toml` declares runtime dependencies only — no test/lint config, no CI. Do not treat them as gates: `uv run pytest` finds no tests, and `uvx ruff check src` / `uvx mypy src` run without config and surface pre-existing, unactionable findings (fine for an ad-hoc look, never a required gate).
+
+The two real checks, run from `mushpi-mock/`:
+
+1. **Version alignment** — the only scripted check. Run the bash snippet in [§ Version Alignment → Verification command](#verification-command); it compares `../mushpi-grow/app/state.py` against `src/mushpi_mock/VERSION` and exits 1 on mismatch. There is no standalone script file (no `tools/check_version.py`) — the snippet itself is the command.
+2. **API smoke test** — start the mock and exercise the endpoints it serves (`GET /sensors`, `PUT /setpoints`, `GET /`), per `README.md` § Verification. This is the functional gate for any API change.
