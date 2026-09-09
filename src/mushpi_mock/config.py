@@ -47,6 +47,10 @@ class MockConfig(BaseModel):
         default="mushpi-dev-secret",
         description="Shared secret sent as X-Pico-Secret header on announce",
     )
+    announce_ip: str | None = Field(
+        default=None,
+        description="IPv4 address announced as the unit's `ip` on announce. Defaults to 127.0.0.1 when unset.",
+    )
     db_path: str | None = Field(
         default=None,
         description="Path to server's SQLite DB (required for --seed-days)",

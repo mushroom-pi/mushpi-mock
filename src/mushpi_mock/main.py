@@ -52,6 +52,7 @@ def create_app(
     hub_secret: str,
     seed_days: int = 0,
     db_path: str | None = None,
+    announce_ip: str | None = None,
 ) -> FastAPI:
     """Create a FastAPI app for a single mock Pico unit.
 
@@ -67,8 +68,13 @@ def create_app(
         hub_secret: Shared secret for X-Pico-Secret header.
         seed_days: If > 0, generate backdated readings on startup.
         db_path: Path to server's SQLite DB (required for seeding).
+        announce_ip: IPv4 address announced as the unit's `ip`
+            (falls back to 127.0.0.1 when None). Also mirrored in
+            `GET /system` wifi info so both stay consistent.
     """
-    state = UnitState(handle=unit_config.handle, port=unit_config.port)
+    state = UnitState(
+        handle=unit_config.handle, port=unit_config.port, announce_ip=announce_ip
+    )
     simulation = SimulationEngine(state)
 
     @asynccontextmanager
@@ -94,7 +100,9 @@ def create_app(
             kicks in (which is fine for demos).
             """
             # 1. Announce (blocking within this task — retries with backoff)
-            ok, unit_id = await announce_with_retry(state, server_url, hub_secret)
+            ok, unit_id = await announce_with_retry(
+                state, server_url, hub_secret, announce_ip
+            )
 
             # 2. Seed historical data
             if seed_days > 0:
@@ -247,6 +255,16 @@ def cli() -> None:
     default=None,
     help="Path to server's SQLite DB (required for --seed-days)",
 )
+@click.option(
+    "--announce-ip",
+    type=str,
+    default=None,
+    help=(
+        "IPv4 address announced as this unit's `ip` (overrides config file). "
+        "Must be a valid IPv4 — server rejects hostnames. "
+        "Defaults to 127.0.0.1."
+    ),
+)
 def start(
     config: str | None,
     count: int,
@@ -254,6 +272,7 @@ def start(
     base_port: int,
     seed_days: int,
     db_path: str | None,
+    announce_ip: str | None,
 ) -> None:
     """Start one or more mock Pico units.
 
@@ -264,6 +283,9 @@ def start(
     # Load or build configuration
     if config:
         cfg = load_config(config)
+        # CLI flag wins over the config-file value when provided
+        if announce_ip is not None:
+            cfg.announce_ip = announce_ip
     else:
         # Build config from CLI flags
         if handles is None:
@@ -273,7 +295,7 @@ def start(
             UnitConfig(handle=h, port=base_port + i)
             for i, h in enumerate(handles)
         ]
-        cfg = MockConfig(units=units, db_path=db_path)
+        cfg = MockConfig(units=units, db_path=db_path, announce_ip=announce_ip)
 
     print(f"Starting {len(cfg.units)} mock unit(s)...")
     for u in cfg.units:
@@ -298,6 +320,7 @@ async def _run_all(cfg: MockConfig, seed_days: int) -> None:
             cfg.hub_secret,
             seed_days,
             cfg.db_path,
+            cfg.announce_ip,
         )
         config = uvicorn.Config(
             app,

@@ -42,6 +42,7 @@ async def announce_once(
     state: UnitState,
     server_url: str,
     hub_secret: str = "mushpi-dev-secret",
+    announce_ip: str | None = None,
 ) -> tuple[bool, int | None]:
     """One-shot POST to the server's announce endpoint.
 
@@ -54,6 +55,12 @@ async def announce_once(
         - software_version, micropython_version, board (optional): metadata
         - board_total_mem_byte, board_total_fs_byte, board_cpu_freq_mhz (optional)
 
+    The `ip` must be a valid IPv4 address (the server validates it with
+    @IsIP('4') — hostnames like "host.docker.internal" get rejected with 400).
+    Falls back to "127.0.0.1" when `announce_ip` is unset, preserving the
+    original behavior. Set it to a reachable address (e.g. the Docker bridge
+    gateway) when the server runs somewhere that can't loop back to the mock.
+
     The X-Pico-Secret header must match the server's PICO_ANNOUNCE_SECRET env var.
     """
     url = f"{server_url}/v1/pico-units/announce"
@@ -61,7 +68,7 @@ async def announce_once(
     health = state.get_health_snapshot()
     payload = {
         "handle": state.handle,
-        "ip": "127.0.0.1",
+        "ip": announce_ip or "127.0.0.1",
         "port": state.port,
         "mac": state._system_info["wifi"]["mac"],
         "software_version": state._system_info["software"]["version"],
@@ -103,6 +110,7 @@ async def announce_with_retry(
     state: UnitState,
     server_url: str,
     hub_secret: str = "mushpi-dev-secret",
+    announce_ip: str | None = None,
 ) -> tuple[bool, int | None]:
     """Announce with exponential backoff retry.
 
@@ -123,7 +131,7 @@ async def announce_with_retry(
         }
     """
     for attempt, delay in enumerate(_BACKOFF_SCHEDULE):
-        ok, unit_id = await announce_once(state, server_url, hub_secret)
+        ok, unit_id = await announce_once(state, server_url, hub_secret, announce_ip)
         if ok:
             return True, unit_id
 

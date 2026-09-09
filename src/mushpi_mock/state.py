@@ -36,7 +36,16 @@ class UnitState:
     Plus additional state for uptime, system info, and control loop.
     """
 
-    def __init__(self, handle: str, port: int) -> None:
+    def __init__(self, handle: str, port: int, announce_ip: str | None = None) -> None:
+        """Build the in-memory state for one unit.
+
+        Args:
+            handle: Unit handle (matches the server's PicoUnit handle).
+            port: Port the mock unit listens on.
+            announce_ip: IPv4 address to report in `_system_info["wifi"]["ip"]`,
+                mirroring what announce.py sends as the unit's `ip`. Falls back
+                to "127.0.0.1" when unset (the original hardcoded value).
+        """
         self.handle = handle
         self.port = port
         self.boot_time = time.time()
@@ -105,7 +114,9 @@ class UnitState:
             },
             "wifi": {
                 "mac": "de:ad:be:ef:00:01",
-                "ip": "127.0.0.1",
+                # Mirrors the `ip` sent on announce (see announce.py).
+                # Defaults to 127.0.0.1 when no announce_ip is configured.
+                "ip": announce_ip or "127.0.0.1",
                 "port": port,
                 "hostname": handle,
             },

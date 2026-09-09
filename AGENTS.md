@@ -36,6 +36,20 @@ mushpi-mock/
     └── announce.py        # Server announce + retry logic
 ```
 
+## Config Keys & CLI Flags
+
+Top-level `MockConfig` keys (`config.py`, JSON via `--config`) and `start` CLI flags (`main.py`). CLI flags shown override the config-file value when provided.
+
+| Config key | CLI flag | Default | Purpose |
+|---|---|---|---|
+| `server_url` | — | `http://localhost:3000` | Server base URL for the announce POST |
+| `hub_secret` | — | `mushpi-dev-secret` | `X-Pico-Secret` header value on announce |
+| `announce_ip` | `--announce-ip` | `127.0.0.1` when unset | IPv4 announced as the unit's `ip` (mirrored in `GET /system` → `wifi.ip`). Server validates it with `@IsIP('4')` — hostnames are rejected with 400. Top-level (shared by all units), not per-unit |
+| `db_path` | `--db-path` / `-d` | `None` | Path to server's SQLite DB (required for `--seed-days`) |
+| `units[]` (`handle`, `port`) | `--handles` / `-H`, `--count` / `-n`, `--base-port` / `-p` | one `mock-tent-1` on port 5000 | Units to run |
+| — | `--seed-days` | `0` | Days of backdated readings to seed on startup |
+| — | `--config` / `-c` | `None` | Path to config JSON |
+
 ## Version Alignment — MANDATORY
 
 The mock and the firmware **must always report the same version**. The version appears in `GET /system` and `GET /` responses, and the server uses it for display.

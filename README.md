@@ -32,6 +32,25 @@ uv run mushpi-mock start --config config.example.json
 5. **Serve**: The FastAPI app exposes all Pico endpoints — `GET /`, `/sensors`, `/setpoints`, `/outputs`, `/control`, `/setup`, `/health`, `/system`, plus `POST`/`PUT` mutations.
 6. **Poll**: The server polls `GET /` every 60 seconds (same as with real Pico units) and stores readings in SQLite.
 
+## Announce IP
+
+By default each unit announces itself to the server with `ip: 127.0.0.1` (and reports the same address in `GET /system` under `wifi.ip`). That works when the server runs on the same host — but not when it doesn't, because `127.0.0.1` always resolves to the *server's own* loopback.
+
+Configure the announced address with the top-level `announce_ip` config key or the `--announce-ip` CLI flag (the flag overrides the config file; all units share the value since they run in one process/container):
+
+```json
+// config.json
+{ "announce_ip": "172.17.0.1", "server_url": "http://localhost:3000" }
+```
+
+```bash
+uv run mushpi-mock start --announce-ip 172.17.0.1
+```
+
+> ⚠️ **The value must be a valid IPv4 address.** The server validates the announce payload's `ip` field with `@IsIP('4')` — a hostname like `host.docker.internal` is rejected with HTTP 400.
+
+Concrete use case — mock talking to a **Dockerized server**: set `announce_ip` to the Docker bridge gateway IP the container can use to reach the host (e.g. `172.17.0.1` or `172.18.0.1` — find it with `docker network inspect <network>`). If the mock is *itself* containerized on a user-defined network, set a static IP reachable from the server container instead.
+
 ## Architecture
 
 ```
