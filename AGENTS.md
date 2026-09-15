@@ -10,8 +10,8 @@ These conventions are read by the `mushpi-mock` agent. The agent is a **single a
 
 ## Canonical References
 
-1. **Pico API contract**: `mushpi-grow/spec/openapi.yaml` — the mock must mirror every endpoint, request/response shape, and behavior defined here.
-2. **Firmware version**: `mushpi-grow/app/state.py` → `_SOFTWARE_VERSION` — the mock's version must always match. See Version Alignment below.
+1. **Pico API contract**: `mushpi-grow/spec/openapi.yaml` — the mock must mirror every endpoint, request/response shape, and behavior defined here. The announce payload is documented in `components.schemas.AnnouncePayload` (it targets the *server's* URL, so it is deliberately not under `paths:`).
+2. **Firmware version**: `mushpi-grow/app/state.py` → `_SOFTWARE_VERSION`, and **API contract version**: `_API_VERSION` — the mock's represented versions must always match. See Version Alignment below.
 3. **Feature design**: Roadmap #18 in `mushpi-docs/roadmap/mvp-roadmap.md`.
 
 ## Project Structure
@@ -28,13 +28,14 @@ mushpi-mock/
 │   └── check-version-alignment.sh  # grow ⇔ mock version check (run manually)
 ├── .venv/                # Virtual environment (auto-created by uv)
 └── src/mushpi_mock/
-    ├── __init__.py        # Package docstring
-    ├── VERSION            # Single source of truth for mock version (must match grow)
+    ├── __init__.py        # Package docstring + `__version__` (mock's OWN version, from pyproject.toml metadata)
+    ├── VERSION            # REPRESENTED firmware version (must match grow; NOT the mock's own version)
     ├── main.py            # FastAPI app factory + click CLI
     ├── config.py          # Pydantic config models
-    ├── state.py           # In-memory unit state
-    ├── router.py          # All Pico API endpoints
-    ├── simulation.py      # Random-walk sensor data generator
+    ├── state.py           # In-memory unit state (`_SOFTWARE_VERSION` + `_API_VERSION` = represented versions)
+    ├── router.py          # All Pico API endpoints + mock-only `GET /version`
+    ├── simulation.py      # Hysteresis control-loop sensor data generator
+    ├── seed.py            # Direct SQLite bulk seeding for --seed-days
     └── announce.py        # Server announce + retry logic
 ```
 
@@ -46,28 +47,38 @@ Top-level `MockConfig` keys (`config.py`, JSON via `--config`) and `start` CLI f
 |---|---|---|---|
 | `server_url` | — | `http://localhost:3000` | Server base URL for the announce POST |
 | `hub_secret` | — | `mushpi-dev-secret` | `X-Pico-Secret` header value on announce |
-| `announce_ip` | `--announce-ip` | `127.0.0.1` when unset | IPv4 announced as the unit's `ip` (mirrored in `GET /system` → `wifi.ip`). Server validates it with `@IsIP('4')` — hostnames are rejected with 400. Top-level (shared by all units), not per-unit |
+| `announce_ip` | `--announce-ip` | `127.0.0.1` when unset | IPv4 announced as the unit's `ip` (mirrored in `GET /system` → `wifi.ip`). Server validates it with `@IsIP('4')` — invalid values are rejected with 422 (global ValidationPipe: `forbidNonWhitelisted` + `UnprocessableEntityException` factory, so hostnames and unknown payload keys also fail). Top-level (shared by all units), not per-unit |
 | `db_path` | `--db-path` / `-d` | `None` | Path to server's SQLite DB (required for `--seed-days`) |
 | `units[]` (`handle`, `port`) | `--handles` / `-H`, `--count` / `-n`, `--base-port` / `-p` | one `mock-tent-1` on port 5000 | Units to run |
 | — | `--seed-days` | `0` | Days of backdated readings to seed on startup |
 | — | `--config` / `-c` | `None` | Path to config JSON |
 
-## Version Alignment — MANDATORY
+## Version Alignment — MANDATORY (Dual-Versioning)
 
-The mock and the firmware **must always report the same version**. The version appears in `GET /system` and `GET /` responses, and the server uses it for display.
+The mock carries **two version identities** (see `mushpi-docs/versioning.md` §6):
 
-**Single source of truth**: `mushpi-grow/app/state.py` → `_SOFTWARE_VERSION`
+| Identity | Lives in | Must match | Where it surfaces |
+|---|---|---|---|
+| **Represented firmware version** | `src/mushpi_mock/VERSION` + `state.py::_SOFTWARE_VERSION` | `mushpi-grow/app/state.py::_SOFTWARE_VERSION` | `GET /system`, `GET /` (+ its `firmware_version` key), announce payload |
+| **Represented API contract version** | `state.py::_API_VERSION` | `mushpi-grow/app/state.py::_API_VERSION` | `GET /` `api_version` key, announce payload `api_version` |
+| **Mock's own service version** | `pyproject.toml` `version` (exposed as `mushpi_mock.__version__` via `importlib.metadata`) | nothing — independent SemVer | `GET /version` only (`mock_version` field) |
 
-The mock has **two** places that need updating when the firmware version bumps:
+The mock and the firmware it represents **must always report the same version**. The version appears in `GET /system` and `GET /` responses, and the server uses it for display.
 
-1. `src/mushpi_mock/VERSION` — plain text file with just the version string (e.g., `0.8.4`)
+**Single sources of truth**: `mushpi-grow/app/state.py` → `_SOFTWARE_VERSION` + `_API_VERSION`
+
+When the firmware version bumps, **two** mock places need updating:
+
+1. `src/mushpi_mock/VERSION` — plain text file with just the represented firmware version string (e.g., `0.8.4`)
 2. `src/mushpi_mock/state.py` → `_SOFTWARE_VERSION` constant
 
-Both must match `mushpi-grow/app/state.py::_SOFTWARE_VERSION`.
+When `_API_VERSION` bumps in grow (a breaking Pico↔Server contract change), update `state.py::_API_VERSION` **in the same pass** — an out-of-date mock would silently mask a real incompatibility. The mock's own `pyproject.toml` version is bumped independently, whenever the mock tool itself changes meaningfully.
+
+`GET /version` returns all three (`mock_version`, `represented_firmware_version`, `represented_api_version`) — it is a mock-only route, NOT part of the mirrored Pico API, and must not be added to `spec/openapi.yaml`.
 
 ### When to update
 
-- After **any** `mushpi-grow` build that bumps `_SOFTWARE_VERSION`
+- After **any** `mushpi-grow` build that bumps `_SOFTWARE_VERSION` (or `_API_VERSION`)
 - The orchestrator triggers `mushpi-mock` with the version bump details
 
 ### Verification command
@@ -76,9 +87,11 @@ Both must match `mushpi-grow/app/state.py::_SOFTWARE_VERSION`.
 ./scripts/check-version-alignment.sh
 ```
 
-Compares `mushpi-grow/app/state.py::_SOFTWARE_VERSION` against **both** `src/mushpi_mock/VERSION`
-and `src/mushpi_mock/state.py::_SOFTWARE_VERSION`. Exit 0 = aligned, 1 = mismatch, 2 = grow
-checkout not found. Read-only.
+Runs two checks: firmware (grow `_SOFTWARE_VERSION` vs **both** `src/mushpi_mock/VERSION`
+and `src/mushpi_mock/state.py::_SOFTWARE_VERSION`) and API (grow `_API_VERSION` vs
+`src/mushpi_mock/state.py::_API_VERSION`). Prints a pass/fail line per check.
+Exit 0 = both aligned, 1 = any mismatch / extraction failure, 2 = grow checkout not
+found. Read-only.
 
 ## Coding Conventions
 
@@ -116,5 +129,5 @@ There is **no** pytest/ruff/mypy test suite, linter, or type checker configured 
 
 The two real checks, run from `mushpi-mock/`:
 
-1. **Version alignment** — run `./scripts/check-version-alignment.sh` (three-way check: grow `_SOFTWARE_VERSION` vs `src/mushpi_mock/VERSION` and `src/mushpi_mock/state.py`). Exit 0 = aligned.
+1. **Version alignment** — run `./scripts/check-version-alignment.sh` (firmware three-way check: grow `_SOFTWARE_VERSION` vs `src/mushpi_mock/VERSION` and `src/mushpi_mock/state.py`; plus API two-way check: grow `_API_VERSION` vs `src/mushpi_mock/state.py`). Exit 0 = all aligned.
 2. **API smoke test** — start the mock and exercise the endpoints it serves (`GET /sensors`, `PUT /setpoints`, `GET /`), per `README.md` § Verification. This is the functional gate for any API change.

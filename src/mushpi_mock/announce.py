@@ -32,7 +32,7 @@ import asyncio
 
 import httpx
 
-from .state import UnitState
+from .state import _API_VERSION, UnitState
 
 # Backoff schedule in seconds — matches the real Pico's retry pattern
 _BACKOFF_SCHEDULE = [5, 10, 30, 60]
@@ -49,14 +49,19 @@ async def announce_once(
     Returns (success, pico_unit_id). On HTTP 2xx, parses the response body
     for the unit's database ID. On failure, returns (False, None).
 
-    The payload shape must match AnnouncePicoUnitDto on the server:
+    The payload shape must match AnnouncePicoUnitDto on the server and
+    spec/openapi.yaml → components.schemas.AnnouncePayload (canonical docs).
+    Key order mirrors the firmware's payload() exactly (mushpi-grow/app/announce.py):
         - handle (required): unit name
-        - ip, port, mac (optional): network identity
-        - software_version, micropython_version, board (optional): metadata
-        - board_total_mem_byte, board_total_fs_byte, board_cpu_freq_mhz (optional)
+        - ip, mac, port (optional): network identity
+        - micropython_version, firmware_version, api_version (optional): version
+          metadata — firmware_version is the represented _SOFTWARE_VERSION,
+          api_version is the Pico↔Server REST contract generation (_API_VERSION)
+        - board, board_total_mem_byte, board_total_fs_byte, board_cpu_freq_mhz (optional): board metrics
 
     The `ip` must be a valid IPv4 address (the server validates it with
-    @IsIP('4') — hostnames like "host.docker.internal" get rejected with 400).
+    @IsIP('4'); the global ValidationPipe has forbidNonWhitelisted, so invalid
+    or unknown keys — e.g. a stale "software_version" — get rejected with 422).
     Falls back to "127.0.0.1" when `announce_ip` is unset, preserving the
     original behavior. Set it to a reachable address (e.g. the Docker bridge
     gateway) when the server runs somewhere that can't loop back to the mock.
@@ -66,13 +71,15 @@ async def announce_once(
     url = f"{server_url}/v1/pico-units/announce"
 
     health = state.get_health_snapshot()
+    # Key order mirrors the firmware's payload() in mushpi-grow/app/announce.py
     payload = {
         "handle": state.handle,
         "ip": announce_ip or "127.0.0.1",
-        "port": state.port,
         "mac": state._system_info["wifi"]["mac"],
-        "software_version": state._system_info["software"]["version"],
+        "port": state.port,
         "micropython_version": state._system_info["micropython"]["build"],
+        "firmware_version": state._system_info["software"]["version"],
+        "api_version": _API_VERSION,
         "board": state._system_info["hardware"]["board"],
         "board_total_mem_byte": health["mem"]["total"],
         "board_total_fs_byte": health["fs"]["total"],

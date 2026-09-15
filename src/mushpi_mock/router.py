@@ -37,7 +37,8 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from .state import UnitState
+from . import __version__ as _MOCK_VERSION
+from .state import _API_VERSION, _SOFTWARE_VERSION, UnitState
 
 router = APIRouter()
 
@@ -124,6 +125,29 @@ class RebootDto(BaseModel):
     type: str = "soft"
 
 
+class VersionInfoDto(BaseModel):
+    """GET /version response — the mock's dual version identity.
+
+    NestJS equivalent: a response DTO (class with class-validator, here
+    Pydantic so FastAPI embeds it as the OpenAPI response schema).
+
+    Mock-only endpoint (not part of the mirrored Pico API): separates the
+    mock tool's own service version from the firmware version it represents,
+    per mushpi-docs/versioning.md §6 (dual-versioning).
+    """
+
+    mock_version: str = Field(
+        description="The mock tool's own version (pyproject.toml `version`)"
+    )
+    represented_firmware_version: str = Field(
+        description="Firmware version the mock emulates (mirrors grow _SOFTWARE_VERSION)"
+    )
+    represented_api_version: int = Field(
+        description="Pico↔Server REST contract generation the mock implements "
+        "(mirrors grow _API_VERSION)"
+    )
+
+
 # ── Helper ────────────────────────────────────────────────────────────────
 
 
@@ -171,6 +195,25 @@ async def system(request: Request) -> dict[str, Any]:
     info = dict(state._system_info)
     info["uptime"] = state.get_uptime_info()
     return info
+
+
+@router.get("/version", response_model=VersionInfoDto)
+async def version() -> VersionInfoDto:
+    """Dual-version identity — mock's own version vs the firmware it represents.
+
+    Mock-only endpoint: the real Pico firmware does NOT serve /version
+    (it is absent from spec/openapi.yaml — do not add it there). This
+    exists because the mock is a mirror *and* an independent service,
+    so it carries two version identities (mushpi-docs/versioning.md §6).
+
+    NestJS mapping: @Get('version') returning a response DTO. FastAPI
+    serialises the Pydantic model and documents it under /docs.
+    """
+    return VersionInfoDto(
+        mock_version=_MOCK_VERSION,
+        represented_firmware_version=_SOFTWARE_VERSION,
+        represented_api_version=_API_VERSION,
+    )
 
 
 # ── Sensor endpoints ──────────────────────────────────────────────────────

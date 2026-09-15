@@ -149,6 +149,10 @@ def create_app(
 
     app = FastAPI(
         title=f"MushPi Mock — {unit_config.handle}",
+        # Deliberately the REPRESENTED firmware version: this app's OpenAPI
+        # docs describe the mirrored Pico API, so info.version should read
+        # like the firmware's. The mock's own service version is separate —
+        # see GET /version (router.py) and mushpi_mock.__version__.
         version=_SOFTWARE_VERSION,
         lifespan=lifespan,
     )

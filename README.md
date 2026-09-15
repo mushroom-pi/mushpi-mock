@@ -29,7 +29,7 @@ uv run mushpi-mock start --config config.example.json
 2. **Announce**: Each unit `POST`s to `http://localhost:3000/v1/pico-units/announce` (configured in `config.json`). Retries with exponential backoff if the server isn't ready. Returns the `pico_unit_id` assigned by the server.
 3. **Simulate**: A hysteresis control loop (3-zone humidity, 2-zone temperature) produces a characteristic sawtooth oscillation around setpoints — matching the real Pico firmware's behavior. Humidifier ON drives humidity up, fan ON drives it down, heater ON drives temperature up.
 4. **Seed** (optional): `--seed-days N` bulk-inserts N days of backdated readings into the server's SQLite database via Python's `sqlite3` stdlib. All 17 columns populated — temperature, humidity, relay states, setpoints, board metrics, response time. Requires `db_path` in `config.json` and a successful announce.
-5. **Serve**: The FastAPI app exposes all Pico endpoints — `GET /`, `/sensors`, `/setpoints`, `/outputs`, `/control`, `/setup`, `/health`, `/system`, plus `POST`/`PUT` mutations.
+5. **Serve**: The FastAPI app exposes all Pico endpoints — `GET /`, `/sensors`, `/setpoints`, `/outputs`, `/control`, `/setup`, `/health`, `/system`, plus `POST`/`PUT` mutations — and one mock-only endpoint, `GET /version`, which separates the mock's own tool version from the firmware/API versions it represents.
 6. **Poll**: The server polls `GET /` every 60 seconds (same as with real Pico units) and stores readings in SQLite.
 
 ## Announce IP
@@ -47,7 +47,7 @@ Configure the announced address with the top-level `announce_ip` config key or t
 uv run mushpi-mock start --announce-ip 172.17.0.1
 ```
 
-> ⚠️ **The value must be a valid IPv4 address.** The server validates the announce payload's `ip` field with `@IsIP('4')` — a hostname like `host.docker.internal` is rejected with HTTP 400.
+> ⚠️ **The value must be a valid IPv4 address.** The server validates the announce payload's `ip` field with `@IsIP('4')` and rejects invalid payloads with **HTTP 422** — its global `ValidationPipe` runs with `forbidNonWhitelisted` and an `UnprocessableEntityException` factory, so hostnames like `host.docker.internal` *and* unknown keys (e.g. a stale `software_version`) both fail there.
 
 Concrete use case — mock talking to a **Dockerized server**: set `announce_ip` to the Docker bridge gateway IP the container can use to reach the host (e.g. `172.17.0.1` or `172.18.0.1` — find it with `docker network inspect <network>`). If the mock is *itself* containerized on a user-defined network, set a static IP reachable from the server container instead.
 
@@ -83,16 +83,31 @@ All endpoints mirror the real Pico firmware. See [`mushpi-grow/spec/openapi.yaml
 | POST/PUT | `/control` | Enable/disable control loop |
 | POST/PUT | `/setup` | Update GPIO configuration |
 | POST | `/reboot` | Mock reboot (no-op — returns 200) |
+| GET | `/version` | **Mock-only** (not in the Pico spec): `{mock_version, represented_firmware_version, represented_api_version}` |
 
 ## Version Alignment
 
-The mock's software version must match the real firmware's `_SOFTWARE_VERSION` in [`mushpi-grow/app/state.py`](../mushpi-grow/app/state.py). Verify with:
+The mock carries **two version identities** (see [`mushpi-docs/versioning.md`](../mushpi-docs/versioning.md) §6):
+
+| Identity | Where it lives | Rule |
+|---|---|---|
+| **Represented firmware version** | `src/mushpi_mock/VERSION` + `_SOFTWARE_VERSION` in [`mushpi-grow/app/state.py`](../mushpi-grow/app/state.py) (`state.py` mirror) | Must always equal grow's `_SOFTWARE_VERSION` — this is what `GET /system`, `GET /` (incl. its `firmware_version` key), and the announce payload report. |
+| **Represented API contract version** | `_API_VERSION` in `src/mushpi_mock/state.py` | Must equal grow's `_API_VERSION` — the Pico↔Server REST contract generation reported in `GET /` and the announce payload (`api_version`). Bumped only on breaking contract changes. |
+| **Mock's own service version** | `pyproject.toml` `version` (exposed via `importlib.metadata` as `mushpi_mock.__version__`) | Independent SemVer for the mock tool itself — surfaced **only** through `GET /version`, never on the mirrored Pico endpoints. |
+
+`GET /version` answers all three at once, so a demo can prove exactly which firmware the mock is emulating without confusing it with the tool's own release line:
+
+```json
+{ "mock_version": "0.1.0", "represented_firmware_version": "0.8.4", "represented_api_version": 1 }
+```
+
+Verify the alignment with:
 
 ```bash
 ./scripts/check-version-alignment.sh
 ```
 
-Exit 0 = aligned, 1 = mismatch, 2 = grow checkout not found. If you manually change the firmware version, also update `src/mushpi_mock/VERSION` and the `_SOFTWARE_VERSION` constant in `state.py`.
+It checks the firmware version three-way (grow `_SOFTWARE_VERSION` vs `VERSION` vs `state.py`) and the API version two-way (grow `_API_VERSION` vs `state.py`), printing one pass/fail line each. Exit 0 = all aligned, 1 = mismatch / extraction failure, 2 = grow checkout not found. If you manually change the firmware version, also update `src/mushpi_mock/VERSION` and the `_SOFTWARE_VERSION` constant in `state.py`; if grow's `_API_VERSION` moves, update `state.py::_API_VERSION` in the same pass.
 
 ## Verification
 

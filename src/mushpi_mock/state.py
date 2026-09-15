@@ -23,7 +23,16 @@ from typing import Any
 # Must match mushpi-grow/app/state.py::_SOFTWARE_VERSION (the source of truth).
 # Also keep src/mushpi_mock/VERSION in sync — it's a plain-text version file
 # used for automated checks between the two repos.
+# This is the *represented firmware version* — the mock's own service version
+# lives in pyproject.toml (exposed separately via GET /version).
 _SOFTWARE_VERSION = "0.8.4"
+
+# Must match mushpi-grow/app/state.py::_API_VERSION (source of truth).
+# Pico↔Server REST contract generation: bumped only on a breaking contract
+# change (endpoint removed/renamed, incompatible shapes, changed semantics).
+# Additive changes do NOT bump it. Canonical docs: spec/openapi.yaml
+# (AnnouncePayload + GET / schemas).
+_API_VERSION = 1
 
 
 class UnitState:
@@ -187,10 +196,16 @@ class UnitState:
 
         This is what the server's cron poller reads every 60 seconds.
         The shape must match exactly so ReadingsService.createFromDeviceResponse()
-        can parse it.
+        can parse it. Key order mirrors the firmware (app/api.py GET /):
+        version metadata (`firmware_version`, `api_version`) sits immediately
+        after `system`, before `health`.
         """
         return {
             "system": self._system_info,
+            # Version metadata (roadmap #21): mirrors the firmware's
+            # firmware_version (SemVer string) / api_version (contract int) pair.
+            "firmware_version": _SOFTWARE_VERSION,
+            "api_version": _API_VERSION,
             "health": self.get_health_snapshot(),
             "uptime": self.get_uptime_info(),
             "devices": self.devices,

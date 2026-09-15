@@ -2,10 +2,16 @@
 # check-version-alignment.sh — mushpi-mock ⇔ mushpi-grow version alignment check
 # (replaces the old inline snippet that used to live in AGENTS.md/README.md).
 #
-# Compares THREE values; all must be identical:
+# Runs two checks:
+#
+# FIRMWARE version — compares THREE values; all must be identical:
 #   1. ../mushpi-grow/app/state.py  _SOFTWARE_VERSION   <- single source of truth
 #   2. src/mushpi_mock/VERSION                            (represented, plain text)
 #   3. src/mushpi_mock/state.py     _SOFTWARE_VERSION     (represented, runtime constant)
+#
+# API version — compares TWO values (REST contract generation, roadmap #21):
+#   1. ../mushpi-grow/app/state.py  _API_VERSION        <- single source of truth
+#   2. src/mushpi_mock/state.py     _API_VERSION        (represented, runtime constant)
 #
 # Run it by hand. Anchors all paths to this script's own location, so it behaves
 # identically from any CWD. Read-only:
@@ -43,6 +49,14 @@ extract_const() {
         | sed -n '1s/.*"\([^"]*\)".*/\1/p'
 }
 
+# Extract the first   _API_VERSION = N   assignment (integer, no quotes).
+# Comments referencing _API_VERSION never match because they lack the '=';
+# usages like "api_version": _API_VERSION, don't match either (',' not digit).
+extract_api_const() {
+    grep -o '_API_VERSION[[:space:]]*=[[:space:]]*[0-9][0-9]*' "$1" \
+        | sed -n '1s/.*=[[:space:]]*//p'
+}
+
 # VERSION file: line 1, all whitespace stripped. NOTE: the p command (not the
 # s///p flag) is deliberate — the s flag only prints when a substitution
 # happens, and a version line like "0.8.4" has no whitespace to substitute.
@@ -67,23 +81,43 @@ is_semver_shape() {
 grow_ver=$(extract_const "$GROW_STATE")
 mock_state_ver=$(extract_const "$MOCK_STATE")
 mock_file_ver=$(read_version_file "$MOCK_VERSION_FILE")
+grow_api=$(extract_api_const "$GROW_STATE")
+mock_api=$(extract_api_const "$MOCK_STATE")
 
 [ -n "$grow_ver" ]       || fail "could not extract _SOFTWARE_VERSION from $GROW_STATE (format changed?)"
 [ -n "$mock_state_ver" ] || fail "could not extract _SOFTWARE_VERSION from $MOCK_STATE (format changed?)"
 [ -n "$mock_file_ver" ]  || fail "could not read version from $MOCK_VERSION_FILE (empty?)"
+[ -n "$grow_api" ]       || fail "could not extract _API_VERSION from $GROW_STATE (missing? format changed?)"
+[ -n "$mock_api" ]       || fail "could not extract _API_VERSION from $MOCK_STATE (missing? format changed?)"
 
 for v in "$grow_ver" "$mock_state_ver" "$mock_file_ver"; do
     is_semver_shape "$v" || fail "malformed version '$v' (expected MAJOR.MINOR.PATCH)"
 done
 
+# Both checks run to completion (pass/fail line each); exit 1 if either failed.
+rc=0
+
+# ── Check 1: firmware version (three-way) ────────────────────────────────
 if [ "$grow_ver" = "$mock_file_ver" ] && [ "$grow_ver" = "$mock_state_ver" ]; then
-    echo "$PREFIX OK — grow=$grow_ver  VERSION=$mock_file_ver  state.py=$mock_state_ver"
-    exit 0
+    echo "$PREFIX FIRMWARE OK — grow=$grow_ver  VERSION=$mock_file_ver  state.py=$mock_state_ver"
+else
+    rc=1
+    echo "$PREFIX FIRMWARE VERSION MISMATCH" >&2
+    echo "$PREFIX   grow   ../mushpi-grow/app/state.py  _SOFTWARE_VERSION : $grow_ver   <- source of truth" >&2
+    echo "$PREFIX   mock   src/mushpi_mock/VERSION                         : $mock_file_ver" >&2
+    echo "$PREFIX   mock   src/mushpi_mock/state.py     _SOFTWARE_VERSION  : $mock_state_ver" >&2
+    echo "$PREFIX   Fix: update BOTH mock locations to $grow_ver (never edit grow's value from the mock)." >&2
 fi
 
-echo "$PREFIX VERSION MISMATCH" >&2
-echo "$PREFIX   grow   ../mushpi-grow/app/state.py  _SOFTWARE_VERSION : $grow_ver   <- source of truth" >&2
-echo "$PREFIX   mock   src/mushpi_mock/VERSION                         : $mock_file_ver" >&2
-echo "$PREFIX   mock   src/mushpi_mock/state.py     _SOFTWARE_VERSION  : $mock_state_ver" >&2
-echo "$PREFIX   Fix: update BOTH mock locations to $grow_ver (never edit grow's value from the mock)." >&2
-exit 1
+# ── Check 2: API contract version (two-way) ──────────────────────────────
+if [ "$grow_api" = "$mock_api" ]; then
+    echo "$PREFIX API OK — grow _API_VERSION=$grow_api  mock _API_VERSION=$mock_api"
+else
+    rc=1
+    echo "$PREFIX API VERSION MISMATCH" >&2
+    echo "$PREFIX   grow   ../mushpi-grow/app/state.py  _API_VERSION : $grow_api   <- source of truth" >&2
+    echo "$PREFIX   mock   src/mushpi_mock/state.py     _API_VERSION : $mock_api" >&2
+    echo "$PREFIX   Fix: update the mock constant to $grow_api (never edit grow's value from the mock)." >&2
+fi
+
+exit $rc
