@@ -86,21 +86,13 @@ All endpoints mirror the real Pico firmware. See [`mushpi-grow/spec/openapi.yaml
 
 ## Version Alignment
 
-The mock's software version must match the real firmware's `_SOFTWARE_VERSION` in [`mushpi-grow/app/state.py`](../mushpi-grow/app/state.py). Run the version check to verify:
+The mock's software version must match the real firmware's `_SOFTWARE_VERSION` in [`mushpi-grow/app/state.py`](../mushpi-grow/app/state.py). Verify with:
 
 ```bash
-uv run python -c "
-import json, re
-version_match = re.search(r'_SOFTWARE_VERSION = \"([^\"]+)\"',
-    open('../mushpi-grow/app/state.py').read())
-grow_version = version_match.group(1)
-mock_version = open('src/mushpi_mock/VERSION').read().strip()
-assert grow_version == mock_version, f'Mismatch: mock={mock_version}, grow={grow_version}'
-print(f'OK: mock={mock_version}, grow={grow_version}')
-"
+./scripts/check-version-alignment.sh
 ```
 
-The `mushpi-mock` agent checks this alignment on every build. If you manually change the firmware version, also update `src/mushpi_mock/VERSION` and the `_SOFTWARE_VERSION` constant in `state.py`.
+Exit 0 = aligned, 1 = mismatch, 2 = grow checkout not found. If you manually change the firmware version, also update `src/mushpi_mock/VERSION` and the `_SOFTWARE_VERSION` constant in `state.py`.
 
 ## Verification
 

@@ -24,6 +24,8 @@ mushpi-mock/
 ├── README.md             # User-facing documentation
 ├── AGENTS.md             # This file
 ├── .python-version       # Python version pin
+├── scripts/
+│   └── check-version-alignment.sh  # grow ⇔ mock version check (run manually)
 ├── .venv/                # Virtual environment (auto-created by uv)
 └── src/mushpi_mock/
     ├── __init__.py        # Package docstring
@@ -71,14 +73,12 @@ Both must match `mushpi-grow/app/state.py::_SOFTWARE_VERSION`.
 ### Verification command
 
 ```bash
-grow_ver=$(grep -oP '_SOFTWARE_VERSION\s*=\s*"\K[^"]+' ../mushpi-grow/app/state.py)
-mock_ver=$(cat src/mushpi_mock/VERSION)
-if [ "$grow_ver" != "$mock_ver" ]; then
-    echo "VERSION MISMATCH: mock=$mock_ver, grow=$grow_ver"
-    exit 1
-fi
-echo "Versions aligned: $mock_ver"
+./scripts/check-version-alignment.sh
 ```
+
+Compares `mushpi-grow/app/state.py::_SOFTWARE_VERSION` against **both** `src/mushpi_mock/VERSION`
+and `src/mushpi_mock/state.py::_SOFTWARE_VERSION`. Exit 0 = aligned, 1 = mismatch, 2 = grow
+checkout not found. Read-only.
 
 ## Coding Conventions
 
@@ -116,5 +116,5 @@ There is **no** pytest/ruff/mypy test suite, linter, or type checker configured 
 
 The two real checks, run from `mushpi-mock/`:
 
-1. **Version alignment** — the only scripted check. Run the bash snippet in [§ Version Alignment → Verification command](#verification-command); it compares `../mushpi-grow/app/state.py` against `src/mushpi_mock/VERSION` and exits 1 on mismatch. There is no standalone script file (no `tools/check_version.py`) — the snippet itself is the command.
+1. **Version alignment** — run `./scripts/check-version-alignment.sh` (three-way check: grow `_SOFTWARE_VERSION` vs `src/mushpi_mock/VERSION` and `src/mushpi_mock/state.py`). Exit 0 = aligned.
 2. **API smoke test** — start the mock and exercise the endpoints it serves (`GET /sensors`, `PUT /setpoints`, `GET /`), per `README.md` § Verification. This is the functional gate for any API change.
