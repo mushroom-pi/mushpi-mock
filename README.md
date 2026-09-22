@@ -1,6 +1,8 @@
-# mushpi-mock
+# 🍄 Mushroom Pi 🍓 - Pico Growing Units Simulator
 
-Mock Pico growing units — mirrors the [`mushpi-grow`](../mushpi-grow/) firmware's REST API with synthetic sensor data. Use for development, demos, screenshots, and testing without real hardware.
+![Python](https://img.shields.io/badge/python-%233670A0.svg?style=for-the-badge&logo=python&logoColor=ffdd54)![uv](https://img.shields.io/badge/uv-%23DE5FE9.svg?style=for-the-badge&logo=uv&logoColor=white)![FastAPI](https://img.shields.io/badge/fastapi-%23009688.svg?style=for-the-badge&logo=fastapi&logoColor=white)![Pydantic](https://img.shields.io/badge/pydantic-%23E92063.svg?style=for-the-badge&logo=pydantic&logoColor=white)![Git](https://img.shields.io/badge/git-%23F05033.svg?style=for-the-badge&logo=git&logoColor=white)
+
+Mock Pico growing units — mirrors the [`mushpi-grow`](https://github.com/mushroom-pi/mushpi-grow) firmware's REST API with synthetic sensor data. Use for development, demos, screenshots, and testing without real hardware.
 
 Each mock unit runs as an independent FastAPI server on its own port, announces itself to the server on startup, and generates **hysteresis-simulated sensor readings** matching the real Pico's control loop behavior — sawtooth oscillation around setpoints, not random noise.
 
@@ -66,7 +68,7 @@ mushpi-mock (Python + FastAPI + uv)
 
 ## Endpoints
 
-All endpoints mirror the real Pico firmware. See [`mushpi-grow/spec/openapi.yaml`](../mushpi-grow/spec/openapi.yaml) for the canonical API contract.
+All endpoints mirror the real Pico firmware. See [`mushpi-grow/spec/openapi.yaml`](https://github.com/mushroom-pi/mushpi-grow/blob/dev/spec/openapi.yaml) for the canonical API contract.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -87,11 +89,11 @@ All endpoints mirror the real Pico firmware. See [`mushpi-grow/spec/openapi.yaml
 
 ## Version Alignment
 
-The mock carries **two version identities** (see [`mushpi-docs/versioning.md`](../mushpi-docs/versioning.md) §6):
+The mock carries **two version identities** (see [`mushpi-docs/versioning.md`](https://github.com/mushroom-pi/mushpi-docs/blob/main/versioning.md) §6):
 
 | Identity | Where it lives | Rule |
 |---|---|---|
-| **Represented firmware version** | `src/mushpi_mock/VERSION` + `_SOFTWARE_VERSION` in [`mushpi-grow/app/state.py`](../mushpi-grow/app/state.py) (`state.py` mirror) | Must always equal grow's `_SOFTWARE_VERSION` — this is what `GET /system`, `GET /` (incl. its `firmware_version` key), and the announce payload report. |
+| **Represented firmware version** | `src/mushpi_mock/VERSION` + `_SOFTWARE_VERSION` in [`mushpi-grow/app/state.py`](https://github.com/mushroom-pi/mushpi-grow/blob/dev/app/state.py) (`state.py` mirror) | Must always equal grow's `_SOFTWARE_VERSION` — this is what `GET /system`, `GET /` (incl. its `firmware_version` key), and the announce payload report. |
 | **Represented API contract version** | `_API_VERSION` in `src/mushpi_mock/state.py` | Must equal grow's `_API_VERSION` — the Pico↔Server REST contract generation reported in `GET /` and the announce payload (`api_version`). Bumped only on breaking contract changes. |
 | **Mock's own service version** | `pyproject.toml` `version` (exposed via `importlib.metadata` as `mushpi_mock.__version__`) | Independent SemVer for the mock tool itself — surfaced **only** through `GET /version`, never on the mirrored Pico endpoints. |
 
