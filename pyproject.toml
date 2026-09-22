@@ -3,6 +3,8 @@ name = "mushpi-mock"
 version = "0.1.0"
 description = "Mock Pico growing unit — mirrors mushpi-grow REST API with synthetic sensor data"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "amda-phd", email = "adriana@amda.dev" }
 ]

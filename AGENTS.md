@@ -23,6 +23,7 @@ mushpi-mock/
 ├── config.example.json   # Example config with defaults
 ├── README.md             # User-facing documentation
 ├── AGENTS.md             # This file
+├── LICENSE               # MIT (verbatim SPDX text)
 ├── .python-version       # Python version pin
 ├── scripts/
 │   └── check-version-alignment.sh  # grow ⇔ mock version check (run manually)

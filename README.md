@@ -130,3 +130,9 @@ curl -s http://localhost:5001/ | python -m json.tool
 
 kill %1
 ```
+
+## License
+
+Distributed under the MIT License — see [`LICENSE`](LICENSE).
+
+Copyright (c) 2026 [Adriana Martín de Aguilera](https://www.amda.dev)
