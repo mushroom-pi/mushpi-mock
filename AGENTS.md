@@ -12,7 +12,7 @@ These conventions are read by the `mushpi-mock` agent. The agent is a **single a
 
 1. **Pico API contract**: `mushpi-grow/spec/openapi.yaml` — the mock must mirror every endpoint, request/response shape, and behavior defined here. The announce payload is documented in `components.schemas.AnnouncePayload` (it targets the *server's* URL, so it is deliberately not under `paths:`).
 2. **Firmware version**: `mushpi-grow/app/state.py` → `_SOFTWARE_VERSION`, and **API contract version**: `_API_VERSION` — the mock's represented versions must always match. See Version Alignment below.
-3. **Feature design**: Roadmap #18 in `mushpi-docs/roadmap/mvp-roadmap.md`.
+3. **Feature design**: issue **#1** in `mushroom-pi/mushpi-mock` — "Mock Pico Units", the migrated form of roadmap #18. The old `mushpi-docs/roadmap/features/18-mock-pico-units.md` was deleted once migrated; the issue body is now the spec, and its dated comment is the completion record.
 
 ## Project Structure
 
