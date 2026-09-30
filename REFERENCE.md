@@ -48,6 +48,9 @@ If the mock's hysteresis simulation is ever rewritten to match a newer firmware 
 - **`GET /version` is mock-only** — the firmware does not serve it; never add it to `spec/openapi.yaml` or the mirrored surface. It exists to keep the mock's dual version identities (own `mock_version` vs `represented_firmware_version`/`represented_api_version`) distinguishable (`mushpi-docs/versioning.md` §6).
 - **`GET /control` response** must return only `{"enabled": bool}` — the real Pico does not expose config fields (`period_s`, `hyst_temp`, etc.) through this endpoint.
 - **`POST /control`** must require the `enabled` key (not optional) and only accept `enabled` in the request body — the real Pico reads `period_s`/`hyst_*` from `config.json`, not from this endpoint.
+- **Firmware-matching error bodies require `JSONResponse`, not `HTTPException`** — `HTTPException` emits `{"detail": ...}` while the firmware's POST handlers emit `{"ok": false, "error": ...}`; returning `JSONResponse(status_code=..., content={"ok": False, "error": ...})` preserves mock/device parity for the same endpoint (e.g. the `POST`/`PUT /setup` GPIO-conflict 400 in `update_setup`).
+- **A handler annotated as returning `dict | Response` (or any `Response` subclass) needs `response_model=None` on the route decorator** (FastAPI 0.141) — route registration otherwise raises `FastAPIError`, whose own hint is that remedy. Both stacked `/setup` decorators carry it for this reason.
+- **Known fidelity gap (pre-existing, deliberately unfixed): Pydantic range violations on `/setup` pins** return FastAPI's `422 {"detail": ...}` (`PinsDto` `ge=1`/`le=29`) while the firmware returns `400 {"ok": false, "error": "pins.<key> must be int in 1..29"}`. Out of scope — do not "fix" it incidentally.
 
 ## Seed Database Format — CRITICAL
 

@@ -35,6 +35,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from . import __version__ as _MOCK_VERSION
@@ -363,15 +364,58 @@ async def get_setup(request: Request) -> dict[str, Any]:
     return dict(state.devices)
 
 
-@router.post("/setup")
-@router.put("/setup")
-async def update_setup(request: Request, dto: SetupDto) -> dict[str, Any]:
+@router.post("/setup", response_model=None)
+@router.put("/setup", response_model=None)
+async def update_setup(request: Request, dto: SetupDto) -> dict[str, Any] | JSONResponse:
     """Update GPIO pin mapping and/or relay polarity.
 
     The firmware persists this to flash (config.json). The mock just
     updates in-memory state.
+
+    Mirrors the firmware's `_setdevices` GPIO-conflict validation: a
+    request that would leave two functions on one GPIO is rejected with
+    400 `{"ok": False, "error": "GPIO <pin> is already assigned to <device>"}`
+    BEFORE any mutation, so a rejected request leaves state unchanged.
+    Checked against a merged view (current mapping overlaid with this
+    request's keys), so re-assigning a device to its own pin is a no-op,
+    a pin freed by another device in the same request is free, and
+    pre-existing duplicates this request does not touch pass. The
+    semantics of this rule set are deliberately duplicated (firmware,
+    server util, mock) and must stay locked together.
+
+    `JSONResponse` (not `HTTPException`) carries the 400: HTTPException
+    would emit `{"detail": ...}` while the firmware emits
+    `{"ok": False, "error": ...}` — the mock must match the wire body.
+    `response_model=None` on the decorators lets FastAPI accept the
+    `dict | JSONResponse` return annotation.
     """
     state = _get_state(request)
+
+    # Control keys in the firmware's fixed scan order (first hit wins).
+    control_keys = ("dht", "humidifier", "fan", "heater")
+
+    if dto.pins is not None:
+        # Incoming keys only (None = not provided), same fixed order.
+        incoming: dict[str, int] = {
+            key: value
+            for key, value in dto.pins.model_dump().items()
+            if value is not None
+        }
+        # Merged view: current mapping overlaid with this request's keys.
+        merged = {**state.devices["pins"], **incoming}
+        # Reject updates that would leave two functions on one GPIO,
+        # before any mutation (mirrors firmware _setdevices).
+        for key in incoming:
+            pin = incoming[key]
+            for other in control_keys:
+                if other != key and merged.get(other) == pin:
+                    return JSONResponse(
+                        status_code=400,
+                        content={
+                            "ok": False,
+                            "error": f"GPIO {pin} is already assigned to {other}",
+                        },
+                    )
 
     if dto.active_high is not None:
         state.devices["active_high"] = dto.active_high
