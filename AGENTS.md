@@ -56,7 +56,7 @@ Top-level `MockConfig` keys (`config.py`, JSON via `--config`) and `start` CLI f
 
 ## Version Alignment — MANDATORY (Dual-Versioning)
 
-The mock carries **two version identities** (see `mushpi-docs/versioning.md` §6):
+The mock carries **two version identities** (normative rules: `mushpi-ops/MAINTAINING.md` §Version & Release Semantics):
 
 | Identity | Lives in | Must match | Where it surfaces |
 |---|---|---|---|

@@ -89,7 +89,7 @@ All endpoints mirror the real Pico firmware. See [`mushpi-grow/spec/openapi.yaml
 
 ## Version Alignment
 
-The mock carries **two version identities** (see [`mushpi-docs/versioning.md`](https://github.com/mushroom-pi/mushpi-docs/blob/main/versioning.md) §6):
+The mock carries **two version identities** (see `mushpi-ops/MAINTAINING.md` §Version & Release Semantics — Mock dual-versioning):
 
 | Identity | Where it lives | Rule |
 |---|---|---|
