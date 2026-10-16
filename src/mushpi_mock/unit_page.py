@@ -26,10 +26,15 @@ What this module is NOT
     shown by those bytes, unchanged and unit-agnostic.
 
 The seam (the only allowed differences)
-    A simulated unit must be *labelled* as simulated, and must say that its
-    changes die with the process. Those statements — and nothing else — are
-    applied here as anchored string substitutions (``MOCK_PAGE_EDITS``), exactly
-    the way the firmware substitutes ``MODE``/``DEVNAME``, so:
+    A simulated unit must be *labelled* as simulated, and must say which of its
+    claims the mock cannot honour. Since the runtime-state build the mock
+    persists grower-chosen values across a stop/start (setpoints, the loop flag,
+    hand-set fan/humidifier — heater never), the banner says so and names the
+    two divergences from a real unit: state lives in a file instead of flash,
+    and the PIN mapping (``config.json`` on the device) is memory-only here.
+    Those statements — and nothing else — are applied here as anchored string
+    substitutions (``MOCK_PAGE_EDITS``), exactly the way the firmware
+    substitutes ``MODE``/``DEVNAME``, so:
       * the vendored bytes stay a verbatim copy (the drift check is a plain hash),
       * the page shipped by ``GET /ui`` and ``GET /`` is the same page a unit ships
         plus the labels the requirements ask for,
@@ -95,8 +100,10 @@ _ASSET_BYTES: dict[str, bytes | None] = {
 # Each entry is (anchor, replacement). Every anchor must occur EXACTLY ONCE in the
 # vendored page — see _validate_anchors(). Wording mirrors the requirements:
 #   * this unit is simulated — no real sensor read, no real device switched
-#   * changes last only until the mock stops; a restart returns it to its start
-#   * a real unit keeps pin changes across reboot; this one does not
+#   * grower-chosen values survive a mock stop/start (state file, not flash):
+#     targets, loop flag, hand-set fan/humidifier; the heater always comes back off
+#   * a real unit keeps pin changes across reboot (config.json on flash); this one
+#     holds them in memory only, and its file state can be reset by deleting it
 # The small-caps "simulated" tag on the Climate and Board-condition cards labels
 # the values that come from the simulation (both are read-only on the page — they
 # have no inputs — so no control has to be disabled here).
@@ -118,9 +125,14 @@ _SIMULATED_BANNER = """<div class="msg e" id="fetchMsg"></div>
                 switched — the environment and board-condition values below come from the mock's
                 own control-loop simulation.
                 <br><br>
-                <b>Changes last only until the mock stops.</b> This unit holds everything in memory:
-                restarting the mock returns it to its starting state. A real growing unit writes a
-                saved PIN mapping to flash and keeps it across a reboot; this one cannot.
+                <b>Your targets, the loop switch and hand-set fan and humidifier positions survive
+                a stop/start of the mock</b> — saved to a per-unit state file on this machine and
+                restored on start, the way a real unit writes them to flash and brings them back
+                after a power cut. The same safety rule holds: the <b>heater always comes back
+                off</b>. Two claims a real unit makes, this one cannot: the state lives in a
+                <b>file, not flash</b> (delete the file and the unit resets to defaults), and the
+                <b>PIN mapping is memory-only</b> — a real unit saves it to config.json and keeps
+                it across reboots; here it is lost when the mock stops.
             </div>
         </div>"""
 

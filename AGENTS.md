@@ -36,6 +36,7 @@ mushpi-mock/
     ├── main.py            # FastAPI app factory + click CLI
     ├── config.py          # Pydantic config models
     ├── state.py           # In-memory unit state (`_SOFTWARE_VERSION` + `_API_VERSION` = represented versions)
+    ├── runtime_state.py   # Per-handle runtime state file (setpoints, loop flag, hand-set fan/humidifier) — survives a stop/start; mirrors the device's runtime.json
     ├── router.py          # All Pico API endpoints + mock-only `GET /version`
     ├── unit_page.py       # Vendored page loader + mock-only render seam
     ├── pins.py            # Reserved-GPIO rules mirrored from grow
@@ -55,6 +56,7 @@ Top-level `MockConfig` keys (`config.py`, JSON via `--config`) and `start` CLI f
 | `hub_secret` | — | `mushpi-dev-secret` | `X-Pico-Secret` header value on announce |
 | `announce_ip` | `--announce-ip` | `127.0.0.1` when unset | IPv4 announced as the unit's `ip` (mirrored in `GET /system` → `wifi.ip`). Server validates it with `@IsIP('4')` — invalid values are rejected with 422 (global ValidationPipe: `forbidNonWhitelisted` + `UnprocessableEntityException` factory, so hostnames and unknown payload keys also fail). Top-level (shared by all units), not per-unit |
 | `db_path` | `--db-path` / `-d` | `None` | Path to server's SQLite DB (required for `--seed-days`) |
+| `state_path` | `--state-path` | `None` → `~/.mushpi-mock` | Directory for the per-handle runtime state files (`<percent-encoded-handle>.json`). Grower-chosen values (setpoints, loop flag, hand-set fan/humidifier) survive a mock stop/start; the heater never persists. Details: `REFERENCE.md` § Runtime-State Persistence |
 | `units[]` (`handle`, `port`) | `--handles` / `-H`, `--count` / `-n`, `--base-port` / `-p` | one `mock-tent-1` on port 5000 | Units to run |
 | — | `--seed-days` | `0` | Days of backdated readings to seed on startup |
 | — | `--config` / `-c` | `None` | Path to config JSON |
@@ -108,6 +110,7 @@ found. Read-only.
 - **Type hints** on all function signatures
 - **Docstrings** on every module, class, and non-trivial function
 - **NestJS analogies** in module docstrings to help the TypeScript-savvy developer
+- **Runtime persistence is router-only**: the three mutation handlers (`POST/PUT /setpoints`, `/outputs`, `/control`) are the *sole* writers of the state file via `RuntimeStateStore`; `simulation.py` must never import `runtime_state` (loop-driven switching is not grower-chosen state); restore runs once in `create_app` (the mock's boot slot). Disabling the loop turns relays off synchronously in the handler, then the engine's one-shot latch (`relays_latched`) holds them off exactly once — after that hand-set positions survive. Force handlers (`GET /?force=1`, `GET /sensors?force=1`) tick the unit's **long-lived** engine from `app.state.simulation`, never a throwaway instance — a fresh engine would re-run the one-off relay wipe on every forced read
 
 ## When the Agent Runs
 

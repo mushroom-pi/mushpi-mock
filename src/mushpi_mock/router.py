@@ -41,6 +41,8 @@ from pydantic import BaseModel, Field
 from . import __version__ as _MOCK_VERSION
 from . import unit_page
 from .pins import PIN_ROLES, VALID_GPIO_HINT, gpio_reject_reason
+from .runtime_state import RuntimeStateStore
+from .simulation import SimulationEngine
 from .state import _API_VERSION, _SOFTWARE_VERSION, UnitState
 
 router = APIRouter()
@@ -168,6 +170,31 @@ def _get_state(request: Request) -> UnitState:
     return request.app.state.unit_state  # type: ignore[attr-defined]
 
 
+def _get_store(request: Request) -> RuntimeStateStore:
+    """Extract this unit's runtime-state store (wired in main.create_app).
+
+    NestJS equivalent: the repository service injected into the controller.
+    Sole consumers are the three mutation handlers below — the firmware rule
+    that only the three POST handlers write runtime.json maps to "only
+    update_setpoints / update_outputs / update_control call the save_*
+    methods". The simulation module must never acquire this store (loop-driven
+    switching never writes storage).
+    """
+    return request.app.state.runtime_store  # type: ignore[attr-defined]
+
+
+def _get_engine(request: Request) -> SimulationEngine:
+    """The unit's LONG-LIVED simulation engine (wired in main.create_app).
+
+    Force-tick handlers must use this one engine, never a throwaway: the
+    disabled-relay one-shot lives on the engine instance (mirroring
+    control_loop()'s `relays_latched`), and a fresh engine per request would
+    re-run the one-off relay wipe on every `?force=1`, wiping hand-set
+    positions a real unit holds.
+    """
+    return request.app.state.simulation  # type: ignore[attr-defined]
+
+
 # ── Monitoring endpoints ──────────────────────────────────────────────────
 
 
@@ -271,15 +298,14 @@ async def get_sensors(request: Request, force: str | None = None) -> dict[str, A
     """Read DHT sensor values.
 
     The firmware supports ?force=1 to trigger an on-demand measurement.
-    In the mock, force triggers an immediate simulation tick.
+    In the mock, force triggers an immediate simulation tick on the unit's
+    LONG-LIVED engine — never a throwaway one, so the disabled-relay one-shot
+    latch is continuous across forced reads (see _get_engine).
     """
     state = _get_state(request)
     if force:
         # Simulate a fresh reading
-        from .simulation import SimulationEngine
-
-        engine = SimulationEngine(state)
-        await engine.tick()
+        await _get_engine(request).tick()
     return state.get_sensor_reading()
 
 
@@ -296,10 +322,18 @@ async def get_setpoints(request: Request) -> dict[str, int]:
 @router.post("/setpoints", response_model=None)
 @router.put("/setpoints", response_model=None)
 async def update_setpoints(request: Request, dto: SetpointsDto) -> dict[str, int] | JSONResponse:
-    """Update temperature and/or humidity setpoints.
+    """Change setpoints (persisted — survives a mock stop/start).
 
-    The firmware immediately re-evaluates hysteresis when setpoints change
-    (if control is enabled). We don't simulate hysteresis in the mock.
+    Mirrors the spec's POST /setpoints description, adapted to the mock's
+    storage: updates one or both setpoints and persists the applied pair to
+    this unit's runtime state file, so the targets survive a stop/start of the
+    mock process — the file equivalent of the device writing runtime.json to
+    flash and surviving a reboot. A write failure is logged on the unit and
+    does NOT fail the request — the response reports the live in-memory state.
+
+    The next simulation tick (within tick_interval seconds, or an immediate
+    one via ?force=1) re-evaluates hysteresis against the new targets when the
+    control loop is enabled.
 
     AP mode: refused with 403 BEFORE any mutation (the firmware's view-only
     guard — mirrored contract shape; the mock always presents as STA).
@@ -312,6 +346,17 @@ async def update_setpoints(request: Request, dto: SetpointsDto) -> dict[str, int
     if dto.humidity is not None:
         state.setpoints["humidity"] = dto.humidity
     print(f"  [{state.handle}] Setpoints updated: {state.setpoints}")
+
+    # Persist the grower-chosen targets — the full current pair read back from
+    # state (not the partial body), so a one-key POST persists both values,
+    # exactly like the firmware's save_setpoints(setpoints["temperature"],
+    # setpoints["humidity"]). This is one of ONLY three mutation handlers that
+    # write the state file; the simulation never does.
+    try:
+        _get_store(request).save_setpoints(state.setpoints["temperature"], state.setpoints["humidity"])
+    except OSError as e:
+        print(f"  [{state.handle}] setpoints: persist failed: {e}")
+
     return dict(state.setpoints)
 
 
@@ -328,7 +373,7 @@ async def get_outputs(request: Request) -> dict[str, bool]:
 @router.post("/outputs", response_model=None)
 @router.put("/outputs", response_model=None)
 async def update_outputs(request: Request, dto: OutputsDto) -> dict[str, Any] | JSONResponse:
-    """Set relay states (manual switching).
+    """Change outputs status (hand-set fan/humidifier persisted; heater never).
 
     Mirrors the firmware's `_setoutputs`: individual keys are OPTIONAL — only the
     keys present in the body are applied (bool-coerced like the firmware, so an
@@ -336,6 +381,15 @@ async def update_outputs(request: Request, dto: OutputsDto) -> dict[str, Any] | 
     least one key is required. The response always reports all three relays read
     back from the unit's state — that is what the page shows after a save ("the
     state the mock reports back").
+
+    Persistence (spec mirror): the applied fan and humidifier states are written
+    to this unit's runtime state file — they are restored on a stop/start when
+    the control loop is off. The heater NEVER persists: it always comes back
+    OFF after a restart (same safety rule as the device; save_outputs has no
+    heater parameter by design). A write failure is logged on the unit and does
+    NOT fail the request. While the loop is on it reclaims all three relays on
+    the next tick — the saved pair matters only for the loop-off restore, again
+    exactly like the device.
 
     The unit page's Devices card sends only the *changed* switches, so a body
     like `{"humidifier": true}` is the normal case. An earlier revision required
@@ -369,6 +423,15 @@ async def update_outputs(request: Request, dto: OutputsDto) -> dict[str, Any] | 
         state._outputs[key] = bool(getattr(dto, key))  # firmware: bool(provided[k])
 
     print(f"  [{state.handle}] Outputs updated: {state._outputs}")
+
+    # Persist the hand-set pair — read from state (the applied values), not the
+    # partial-body locals, so a single-key POST persists the full pair. The
+    # heater is structurally excluded: save_outputs takes no heater parameter.
+    try:
+        _get_store(request).save_outputs(state._outputs["fan"], state._outputs["humidifier"])
+    except OSError as e:
+        print(f"  [{state.handle}] outputs: persist failed: {e}")
+
     return {
         "ok": True,
         "fan": state._outputs["fan"],
@@ -395,10 +458,28 @@ async def get_control(request: Request) -> dict[str, bool]:
 @router.post("/control", response_model=None)
 @router.put("/control", response_model=None)
 async def update_control(request: Request, dto: ControlDto) -> dict[str, Any] | JSONResponse:
-    """Enable/disable the control loop and/or update hysteresis parameters.
+    """Toggle control loop (persisted — the loop restarts as it was left).
 
-    The firmware calls relays_off() when disabling. We just update the flag.
-    All fields are optional — only provided fields are updated (partial PATCH).
+    Mirrors the spec's POST /control description, adapted to the mock's
+    storage: the enabled flag is written to this unit's runtime state file, so
+    after a stop/start the loop comes back in the state it was left in. When
+    the loop comes back off, the persisted hand-set fan/humidifier states are
+    restored too (the heater always comes back OFF); when it comes back on, no
+    relay state is restored and the loop drives the relays from the persisted
+    setpoints. A write failure is logged on the unit and does NOT fail the
+    request.
+
+    Disabling turns all relays off immediately in this handler (the firmware's
+    synchronous `relays_off()`), then the engine's one-shot latch holds them
+    off while the loop stays disabled — after that one-off pass, hand-set
+    positions made via POST /outputs survive, exactly like a unit whose loop
+    is off. The disable-off is an actuation change, NOT a persistence event:
+    the saved outputs keep the last grower-hand-set pair.
+
+    The hysteresis config fields (period_s, hyst_*, deadbands, min_runtime)
+    stay in-memory only — the device loads them from config.json at boot; they
+    are not part of runtime state and are lost on a mock restart. All fields
+    are optional here — only provided fields are updated (partial PATCH).
 
     AP mode: refused with 403 BEFORE the enable flag changes and before relays
     are touched (the firmware's view-only guard — mirrored contract shape; the
@@ -409,6 +490,11 @@ async def update_control(request: Request, dto: ControlDto) -> dict[str, Any] | 
         return _ap_view_only()
     if dto.enabled is not None:
         state.control_enabled = dto.enabled
+        # Persist the loop switch so the grower's choice survives a restart.
+        try:
+            _get_store(request).save_control_enabled(dto.enabled)
+        except OSError as e:
+            print(f"  [{state.handle}] control: persist failed: {e}")
     if dto.period_s is not None:
         state.control_config["period_s"] = dto.period_s
     if dto.hyst_temp is not None:
@@ -421,6 +507,15 @@ async def update_control(request: Request, dto: ControlDto) -> dict[str, Any] | 
         state.control_config["temperature_deadband"] = dto.temperature_deadband
     if dto.min_runtime is not None:
         state.control_config["min_runtime"] = dto.min_runtime
+
+    # Synchronous relays_off when disabling — firmware parity (io.relays_off()
+    # runs inside the POST handler, before the loop's next pass). In-memory
+    # only: the persisted outputs keep the last hand-set pair, never this
+    # forced-off, matching the device exactly.
+    if dto.enabled is False:
+        state._outputs.update({"fan": False, "humidifier": False, "heater": False})
+        print(f"  [{state.handle}] Control disabled — relays off")
+
     print(f"  [{state.handle}] Control updated: enabled={state.control_enabled}, "
           f"config={state.control_config}")
     return {
@@ -614,9 +709,6 @@ async def get_all(request: Request, force: str | None = None) -> dict[str, Any] 
         return unit_page.unit_page_response(state.mode, state.handle)
 
     if force:
-        from .simulation import SimulationEngine
-
-        engine = SimulationEngine(state)
-        await engine.tick()
+        await _get_engine(request).tick()
     return state.get_full_snapshot()
 

@@ -20,9 +20,11 @@ NestJS mapping:
     uses plain Python — we wire dependencies manually in create_app().
 
 Startup sequence:
-    1. HTTP server starts immediately (accepts requests right away)
-    2. Background task: announce → seed → start simulation
-    3. Simulation begins producing hysteresis-driven sensor data
+    1. create_app(): runtime state rehydrated once from the unit's state file
+       (the mock's boot slot — mirrors the firmware's runtime_state.restore())
+    2. HTTP server starts immediately (accepts requests right away)
+    3. Background task: announce → seed → start simulation
+    4. Simulation begins producing hysteresis-driven sensor data
 """
 
 from __future__ import annotations
@@ -41,6 +43,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .announce import announce_with_retry
 from .config import MockConfig, UnitConfig, load_config
 from .router import router
+from .runtime_state import RuntimeStateStore
 from .seed import seed_readings
 from .simulation import SimulationEngine
 from .state import _SOFTWARE_VERSION, UnitState
@@ -53,12 +56,14 @@ def create_app(
     seed_days: int = 0,
     db_path: str | None = None,
     announce_ip: str | None = None,
+    state_path: str | None = None,
 ) -> FastAPI:
     """Create a FastAPI app for a single mock Pico unit.
 
     NestJS equivalent: NestFactory.create(AppModule) with providers
     configured in the module. Here we manually wire:
         - UnitState (the "service" holding mutable state)
+        - RuntimeStateStore (the "repository" persisting grower-chosen state)
         - SimulationEngine (the "cron job" updating sensors)
         - Announcement (the "bootstrap hook" that runs on startup)
 
@@ -71,6 +76,10 @@ def create_app(
         announce_ip: IPv4 address announced as the unit's `ip`
             (falls back to 127.0.0.1 when None). Also mirrored in
             `GET /system` wifi info so both stay consistent.
+        state_path: Directory for the per-handle runtime state files
+            (None → the default ~/.mushpi-mock). Mirrors the device's
+            runtime.json at flash root: grower-chosen targets, the loop
+            flag, and hand-set fan/humidifier survive a stop/start here.
     """
     state = UnitState(
         handle=unit_config.handle,
@@ -82,6 +91,13 @@ def create_app(
         hub_configured=bool(server_url),
     )
     simulation = SimulationEngine(state)
+
+    # ── Boot rehydrate (the mock's boot path is create_app) ───────────────
+    # Mirrors runtime_state.restore() on the firmware's boot slot: restored
+    # once, before the event loop serves anything. The store is keyed per
+    # handle so multi-unit runs sharing a directory never collide.
+    store = RuntimeStateStore(handle=unit_config.handle, state_dir=state_path)
+    store.restore(state, simulation)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -179,6 +195,7 @@ def create_app(
     # NestJS equivalent: these would be injectable services
     app.state.unit_state = state
     app.state.simulation = simulation
+    app.state.runtime_store = store
     app.state.config = unit_config
 
     return app
@@ -275,6 +292,17 @@ def cli() -> None:
         "Defaults to 127.0.0.1."
     ),
 )
+@click.option(
+    "--state-path",
+    type=str,
+    default=None,
+    help=(
+        "Directory for the per-handle runtime state files (overrides config "
+        "file). Mirrors the device's runtime.json: setpoints, the loop flag, "
+        "and hand-set fan/humidifier survive a stop/start here. "
+        "Defaults to ~/.mushpi-mock."
+    ),
+)
 def start(
     config: str | None,
     count: int,
@@ -283,12 +311,16 @@ def start(
     seed_days: int,
     db_path: str | None,
     announce_ip: str | None,
+    state_path: str | None,
 ) -> None:
     """Start one or more mock Pico units.
 
     Each unit runs as an independent FastAPI server on its own port,
     with its own sensor state and simulation engine. All units announce
-    themselves to the server on startup.
+    themselves to the server on startup. Grower-chosen control state
+    (targets, loop flag, hand-set fan/humidifier) persists across a
+    stop/start via per-handle files under --state-path / `state_path`
+    (default ~/.mushpi-mock); the heater is never stored.
     """
     # Load or build configuration
     if config:
@@ -296,6 +328,8 @@ def start(
         # CLI flag wins over the config-file value when provided
         if announce_ip is not None:
             cfg.announce_ip = announce_ip
+        if state_path is not None:
+            cfg.state_path = state_path
     else:
         # Build config from CLI flags
         if handles is None:
@@ -305,7 +339,9 @@ def start(
             UnitConfig(handle=h, port=base_port + i)
             for i, h in enumerate(handles)
         ]
-        cfg = MockConfig(units=units, db_path=db_path, announce_ip=announce_ip)
+        cfg = MockConfig(
+            units=units, db_path=db_path, announce_ip=announce_ip, state_path=state_path
+        )
 
     print(f"Starting {len(cfg.units)} mock unit(s)...")
     for u in cfg.units:
@@ -331,6 +367,11 @@ async def _run_all(cfg: MockConfig, seed_days: int) -> None:
             seed_days,
             cfg.db_path,
             cfg.announce_ip,
+            # cfg.state_path is the single source here: start() has already
+            # applied the --state-path-over-config-file precedence. Passing it
+            # is load-bearing — dropping it would silently fall back to the
+            # default ~/.mushpi-mock and ignore the configured directory.
+            state_path=cfg.state_path,
         )
         config = uvicorn.Config(
             app,

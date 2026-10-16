@@ -443,7 +443,9 @@
         <div class="card">
             <h2>Controls</h2>
             <div class="cardnote">The automatic regulation switch and its targets. Nothing is sent until you press
-                Apply.</div>
+                Apply. Once applied, the targets and the loop switch are saved on the unit and <b>survive a power
+                cut</b>. Learn more in the
+                <a href="https://mushroom-pi.mintlify.site/hardware/unit-page">unit page documentation</a>.</div>
             <div class="alert" id="ctlAlert">Loading…</div>
             <div class="tog">
                 <input type="checkbox" class="switch" id="loopChk">
@@ -486,9 +488,11 @@
             <div class="sum" id="devSum">No changes to send.</div>
             <button type="button" id="devSave" disabled>Apply devices</button>
             <div class="msg" id="devMsg"></div>
-            <div class="why">Hand-set positions are <b>temporary</b>: they last until the loop is re-enabled — the loop
-                immediately reclaims control of all three devices and drives them from the targets. Turning the loop off
-                forces every relay off first.</div>
+            <div class="why">Hand-set <b>fan and humidifier</b> positions are saved on the unit: while the loop stays
+                off they <b>survive a restart</b> and come back exactly as you left them. The <b>heater always comes
+                back off</b> after a restart. Re-enabling the loop immediately reclaims control of all three devices
+                and drives them from the targets. Turning the loop off forces every relay off first. See the
+                <a href="https://mushroom-pi.mintlify.site/hardware/unit-page">unit page documentation</a> for more.</div>
         </div>
 
         <!-- ── pin mapping ── -->

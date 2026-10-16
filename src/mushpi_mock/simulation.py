@@ -35,7 +35,10 @@ deadbands (v0.7.0+):
         Humidifier ON → evaporative cooling lowers temperature slightly.
         Heater ON → warm air drying lowers relative humidity slightly.
 
-    When control_loop_enabled = false: all relays OFF, free random walk.
+    When control_loop_enabled = false: relays are turned off ONCE by the
+    engine's latched pass (mirroring control_loop()'s `relays_latched`), then
+    left alone — hand-set positions persist while the loop stays off, exactly
+    like a real unit. Sensors drift freely (random walk).
 
 Intentional omissions (firmware v0.8.0+):
     As of firmware v0.8.0, the real Pico implements asymmetric deadband
@@ -52,6 +55,13 @@ Intentional omissions (firmware v0.8.0+):
 The core logic lives in `compute_hysteresis_tick()` — a pure function shared
 by both the live SimulationEngine and the offline seed generator (seed.py).
 This avoids duplicating the hysteresis rules in two places.
+
+Persistence rule (mirrors the firmware's "control.py must never import
+runtime_state"): **this module never writes storage.** Loop-driven relay
+switching must not persist — grower-chosen state is saved only by the three
+mutation handlers in router.py. The one-shot relay-off when the loop is
+disabled is an in-memory state change here, never a disk write; do not import
+runtime_state into this module.
 """
 
 from __future__ import annotations
@@ -164,13 +174,12 @@ def compute_hysteresis_tick(
     }
 
     if not control_enabled:
-        # ── Control disabled: all relays OFF, free random walk ─────────
-        # The real firmware calls relays_off() when control is disabled.
-        # Sensors continue to be sampled but no actuators are driven.
-        new_outputs["fan"] = False
-        new_outputs["humidifier"] = False
-        new_outputs["heater"] = False
-
+        # ── Control disabled: outputs untouched, free random walk ─────────
+        # The real firmware's loop turns relays off ONCE when it finds control
+        # disabled (the `relays_latched` one-shot, owned by SimulationEngine.tick
+        # here) and afterwards leaves hand-set positions alone — it does not
+        # fight them every pass. So the pure tick returns the outputs as they
+        # came in; the only change while disabled is that sensors keep drifting.
         temp += random.uniform(-0.5, 0.5)
         humidity += random.uniform(-0.5, 0.5)
     else:
@@ -246,6 +255,14 @@ class SimulationEngine:
         self.tick_interval = tick_interval
         self._running = False
         self._task: asyncio.Task[None] | None = None
+        # Mirrors control_loop()'s local `relays_latched`: while the loop is
+        # disabled the relays are turned off EXACTLY once, then hand-set
+        # positions are left alone (the firmware's one-shot latch — without it,
+        # a POST /outputs setting made while disabled would be wiped on the
+        # next tick, which a real unit does not do). runtime_state.restore()
+        # primes this to True on a boot that comes back with the loop off, so
+        # restored positions survive the first disabled tick.
+        self.relays_latched: bool = False
 
     async def tick(self) -> None:
         """One simulation step: run hysteresis and update state.
@@ -253,8 +270,21 @@ class SimulationEngine:
         Reads current sensor values, setpoints, and control config from
         the unit state, runs the hysteresis algorithm, and writes back
         the new sensor values and relay states.
+
+        The disabled branch is the one-shot relay-off (mirroring the firmware
+        loop's `relays_latched`), done HERE in memory — never persisted (see
+        the module docstring's persistence rule). An enabled pass resets the
+        latch so the next disable turns the relays off once again.
         """
         s = self.state
+
+        if not s.control_enabled:
+            if not self.relays_latched:
+                # relays_off() equivalent — one-shot, in-memory only.
+                s._outputs.update({"fan": False, "humidifier": False, "heater": False})
+                self.relays_latched = True
+        else:
+            self.relays_latched = False
 
         new_temp, new_hum, new_outputs = compute_hysteresis_tick(
             temp=float(s._sensors["temperature"]),

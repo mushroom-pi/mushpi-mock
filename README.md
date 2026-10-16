@@ -34,6 +34,34 @@ uv run mushpi-mock start --config config.example.json
 5. **Serve**: The FastAPI app exposes all Pico endpoints — `GET /`, `/sensors`, `/setpoints`, `/outputs`, `/control`, `/setup`, `/health`, `/system`, plus `POST`/`PUT` mutations — and one mock-only endpoint, `GET /version`, which separates the mock's own tool version from the firmware/API versions it represents.
 6. **Poll**: The server polls `GET /` every 60 seconds (same as with real Pico units) and stores readings in SQLite.
 
+## Runtime State — Survives a Stop/Start
+
+The mock **persists grower-chosen control state across a stop/start of the process**, mirroring the firmware's `runtime.json` on flash:
+
+| What | Survives stop/start? |
+|---|---|
+| Setpoints (targets) | **Yes** — restored on start |
+| Control-loop on/off flag | **Yes** — the loop restarts as it was left |
+| Hand-set fan + humidifier positions | **Yes, when the loop is off** — restored as you left them |
+| **Heater** | **Never** — always comes back **off** after a restart (same safety rule as the device) |
+| Pin mapping (`POST /setup`) | No — memory-only here; the device writes it to `config.json` and keeps it across reboots |
+| Hysteresis config (`period_s`, `hyst_*`, …) | No — the device loads these from `config.json` at boot; they are not runtime state |
+
+State lives in **one JSON file per unit handle** (`<handle>.json`, percent-encoded for filesystem safety, so two handles never collide) under the state directory. Files are written atomically (`.tmp` + `os.replace`). A missing or corrupt state file is never fatal: the unit starts with its defaults.
+
+Configure the directory with the top-level `state_path` config key or the `--state-path` CLI flag (the flag overrides the config file). Default when unset: `~/.mushpi-mock/`.
+
+```json
+// config.json
+{ "state_path": "~/.mushpi-mock" }
+```
+
+```bash
+uv run mushpi-mock start --state-path /var/lib/mushpi-mock/state
+```
+
+To reset a unit to factory defaults, stop the mock and delete its state file. (A real unit needs the equivalent flash wipe; the mock's durability is a file on this machine — labelled on the unit page's simulated-unit banner.)
+
 ## Announce IP
 
 By default each unit announces itself to the server with `ip: 127.0.0.1` (and reports the same address in `GET /system` under `wifi.ip`). That works when the server runs on the same host — but not when it doesn't, because `127.0.0.1` always resolves to the *server's own* loopback.
@@ -57,13 +85,17 @@ Concrete use case — mock talking to a **Dockerized server**: set `announce_ip`
 
 ```
 mushpi-mock (Python + FastAPI + uv)
-    ├── main.py         FastAPI app factory + click CLI (like main.ts + AppModule)
-    ├── config.py       Pydantic config models (like ConfigModule + Joi)
-    ├── state.py        In-memory unit state (like an @Injectable() service)
-    ├── router.py       All Pico API endpoints (like a @Controller())
-    ├── simulation.py   Hysteresis control loop (like a @Cron() service)
-    ├── seed.py         Direct SQLite bulk seeding for --seed-days
-    └── announce.py     Server announce on startup (like a bootstrap hook)
+    ├── main.py           FastAPI app factory + click CLI (like main.ts + AppModule)
+    ├── config.py         Pydantic config models (like ConfigModule + Joi)
+    ├── state.py          In-memory unit state (like an @Injectable() service)
+    ├── runtime_state.py  Per-handle state file: survives a stop/start (the device's runtime.json mirror)
+    ├── router.py         All Pico API endpoints (like a @Controller())
+    ├── unit_page.py      Vendored unit page + mock-only render seam
+    ├── pins.py           Reserved-GPIO rules mirrored from grow
+    ├── simulation.py     Hysteresis control loop (like a @Cron() service)
+    ├── seed.py           Direct SQLite bulk seeding for --seed-days
+    ├── announce.py       Server announce on startup (like a bootstrap hook)
+    └── static/           Byte-identical vendored page assets + VENDOR manifest
 ```
 
 ## Endpoints
@@ -90,7 +122,7 @@ All endpoints mirror the real Pico firmware. See [`mushpi-grow/spec/openapi.yaml
 | POST | `/reboot` | Mock reboot (no-op — returns 200) |
 | GET | `/version` | **Mock-only** (not in the Pico spec): `{mock_version, represented_firmware_version, represented_api_version}` |
 
-> The page is byte-identical to a unit's page except that it is labelled as simulated, and that changes last only until the mock stops.
+> The page is byte-identical to a unit's page except for the simulated-unit labels: grower-chosen values (targets, loop flag, hand-set fan/humidifier) persist across a stop/start via a state file rather than flash — the heater always comes back off — and the PIN mapping is memory-only here (see [Runtime State](#runtime-state--survives-a-stopstart)).
 
 ## Version Alignment
 
@@ -105,7 +137,7 @@ The mock carries **two version identities** (see `mushpi-ops/MAINTAINING.md` §V
 `GET /version` answers all three at once, so a demo can prove exactly which firmware the mock is emulating without confusing it with the tool's own release line:
 
 ```json
-{ "mock_version": "0.1.0", "represented_firmware_version": "0.8.4", "represented_api_version": 1 }
+{ "mock_version": "0.2.0", "represented_firmware_version": "0.8.4", "represented_api_version": 1 }
 ```
 
 Verify the alignment with:

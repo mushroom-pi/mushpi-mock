@@ -2,7 +2,7 @@
 
 Long-tail details and gotchas. **Load only when the task touches these areas** — do not read on every spawn. The always-loaded [`AGENTS.md`](./AGENTS.md) holds the overview, canonical references, project structure, version alignment, coding conventions, and workflow.
 
-Topics covered here: simulation fidelity/hysteresis · seed database format · NestJS pattern mappings · teaching requirements.
+Topics covered here: simulation fidelity/hysteresis · runtime-state persistence · seed database format · NestJS pattern mappings · teaching requirements.
 
 ---
 
@@ -28,7 +28,7 @@ The mock must produce **business-valuable data**, not noise. A real Pico running
   - When temperature ≤ setpoint: `heater_on = true`, temp trends **up** (+0.3 to +0.8 per tick).
   - When temperature > setpoint: `heater_on = false`, temp trends **down** (-0.5 to -0.1 per tick).
   - Thermal lag in the drift rates produces natural oscillation around the setpoint.
-- When `control_loop_enabled = false`: all relays OFF, sensors drift freely (random walk)
+- When `control_loop_enabled = false`: relays turn off **once** via the engine's one-shot latch (`SimulationEngine.relays_latched`, mirroring the firmware loop's `relays_latched`) — then hand-set positions from `POST /outputs` survive while the loop stays off (no per-tick fight; a real unit does not wipe them). A boot restore that comes back with the loop **off** primes the latch, so restored positions survive the first disabled tick. Sensors drift freely (random walk)
 - All values stay clamped within DHT11 range (temp 0–50°C, humidity 10–90%)
 
 ### Intentional Omissions (v0.8.0+)
@@ -58,6 +58,19 @@ If the mock's hysteresis simulation is ever rewritten to match a newer firmware 
 - **`POST /outputs` applies only the keys present** (≥1 required; an empty body returns the firmware-shaped `422 {"ok": false, "error": "the body must include at least one of: ..."}`), and the response always reads all three relays back from state. The unit page's Devices card sends only the switches that changed, so an all-three-required rule would refuse every single-switch toggle.
 - **`/setup` pins are validated in-handler from the RAW body, in firmware order**: `pins.gpio_reject_reason` per role (assignable set 1–22, 26, 27, 28; named refusals for GP0 and GP23–25/GP29; bool and non-int → "must be a whole number"), **then** the merged-view duplicate rule, **then** `active_high`. The mock has **no boot-time config validation**: the firmware's separate, stricter boot duplicate-GPIO rule is deliberately **not** mirrored and must not be folded into this one.
 - **The vendored page is byte-identical; every mock-only difference lives in the render seam.** Editing `src/mushpi_mock/static/*` breaks `scripts/check-unit-page-drift.sh` and the "same page" requirement. Each anchor in `unit_page.py` must occur **exactly once** — a firmware reword raises at import, which is intended. Refresh with `scripts/refresh-unit-page.sh`, then re-point the anchors against the new page.
+
+## Runtime-State Persistence — device `runtime.json` equivalent
+
+`runtime_state.py::RuntimeStateStore` mirrors the firmware's `app/runtime_state.py` (the grow v0.8.4 behaviour). The rule that matters when touching the mutation handlers or the simulation:
+
+- **File schema** (versioned, `_VERSION = 1`): `{version, setpoints{temperature, humidity}, control_enabled, outputs{fan, humidifier}}`. **There is no heater key** — `save_outputs()` takes no heater parameter by design. A file with an unknown top-level `version` loads as empty (never misread).
+- **Keying**: one file per unit handle under `state_path` (default `~/.mushpi-mock/`), named `<percent-encoded-handle>.json` — the encoding is injective, so `--handles a,b` sharing one directory never collide.
+- **Writers**: exactly the three mutation handlers in `router.py` — `update_setpoints` (persists the full pair read back from state, not the partial body), `update_outputs` (persists the applied fan/humidifier pair), `update_control` (persists only the `enabled` flag; the disable-relays-off is in-memory, **not** a persistence event). `simulation.py` never imports `runtime_state`. A save failure logs on the unit and does **not** fail the request (firmware parity).
+- **Atomic write**: `.tmp` + `os.replace` (CPython's equivalent of the firmware's `.tmp` + rename).
+- **Restore** (`main.create_app`, once, before anything serves — the mock's boot slot): targets written **in place** into `state.setpoints` (the dict is shared with the snapshot builders; never reassign it), then the loop flag; **loop on → touch no outputs** (the loop drives from its first tick); **loop off → prime `relays_latched`, force heater OFF first and unconditionally, then apply stored fan/humidifier**. Missing/corrupt file → state.py defaults, never raises into startup.
+- **Restore-time normalisation** (mirrors the firmware's `_load()`): setpoints must be `int` (a `bool` is corruption — Python's bool-is-int subclassing is why the check is explicit), clamped at restore to 0–50 °C / 10–90 % RH; `control_enabled`/outputs must be strict bools; individual corrupt fields are dropped so the good ones survive. The live `POST /setpoints` endpoint does **no** range check — clamping is restore-time only.
+- **Hysteresis config (`period_s`, `hyst_*`, deadbands, `min_runtime`) and pin mapping (`POST /setup`) are not runtime state** — the device loads them from `config.json` at boot; the mock keeps them in memory and they die with the process. Do not add them to the state file.
+- **Deliberate divergences from the device** (documented on the unit page's banner): the mock's durability is a file, not flash (deleting the state file resets the unit); the firmware's AP-boot restore branch is not mirrored (the mock has no AP mode).
 
 ## Seed Database Format — CRITICAL
 
