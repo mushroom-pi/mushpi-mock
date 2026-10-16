@@ -68,11 +68,11 @@ mushpi-mock (Python + FastAPI + uv)
 
 ## Endpoints
 
-All endpoints mirror the real Pico firmware. See [`mushpi-grow/spec/openapi.yaml`](https://github.com/mushroom-pi/mushpi-grow/blob/dev/spec/openapi.yaml) for the canonical API contract.
+All endpoints mirror the real Pico firmware. See [`mushpi-grow/spec/openapi.yaml`](https://github.com/mushroom-pi/mushpi-grow/blob/dev/spec/openapi.yaml) for the canonical API contract. The firmware's AP-provisioning endpoint (`POST /provision`) is not mirrored.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/` | Full system snapshot (server polls this every 60s) |
+| GET | `/` | Full JSON system snapshot (server polls this every 60s); a browser whose `Accept` header prefers HTML gets the unit page instead |
 | GET | `/sensors` | DHT sensor reading |
 | GET | `/setpoints` | Current target temp/humidity |
 | GET | `/outputs` | Relay states (fan, humidifier, heater) |
@@ -80,12 +80,17 @@ All endpoints mirror the real Pico firmware. See [`mushpi-grow/spec/openapi.yaml
 | GET | `/setup` | GPIO pin mapping |
 | GET | `/health` | System health (RAM, WiFi, uptime) |
 | GET | `/system` | Board info, MicroPython version, software version |
+| GET | `/ui` | On-unit status-and-control page (HTML). The same page a real unit serves, so the interface can be seen and exercised without hardware |
+| GET | `/static/{filename}` | Page assets for the unit page: `unit.js` and `favicon.svg`. Unknown or missing asset → `404` |
+| GET | `/ping` | Liveness check (empty `200`) |
 | POST/PUT | `/setpoints` | Update temp/humidity targets |
 | POST/PUT | `/outputs` | Set relay states |
 | POST/PUT | `/control` | Enable/disable control loop |
 | POST/PUT | `/setup` | Update GPIO configuration |
 | POST | `/reboot` | Mock reboot (no-op — returns 200) |
 | GET | `/version` | **Mock-only** (not in the Pico spec): `{mock_version, represented_firmware_version, represented_api_version}` |
+
+> The page is byte-identical to a unit's page except that it is labelled as simulated, and that changes last only until the mock stops.
 
 ## Version Alignment
 
