@@ -2,7 +2,7 @@
 
 These conventions are read by the `mushpi-mock` agent. The agent is a **single agent** (no planner/builder split) — it plans and builds in one pass.
 
-> **Reference**: on-demand details (simulation fidelity/hysteresis spec, seed database format, NestJS pattern mappings, teaching requirements) live in [`REFERENCE.md`](./REFERENCE.md). Load it **only when the task touches those areas** — do not read it on every spawn.
+> **Reference**: on-demand details (simulation fidelity/hysteresis spec, seed database format, NestJS pattern mappings, teaching requirements, packaging & the ops image contract) live in [`REFERENCE.md`](./REFERENCE.md). Load it **only when the task touches those areas** — do not read it on every spawn.
 
 ## Project Overview
 
@@ -111,6 +111,7 @@ found. Read-only.
 - **Docstrings** on every module, class, and non-trivial function
 - **NestJS analogies** in module docstrings to help the TypeScript-savvy developer
 - **Runtime persistence is router-only**: the three mutation handlers (`POST/PUT /setpoints`, `/outputs`, `/control`) are the *sole* writers of the state file via `RuntimeStateStore`; `simulation.py` must never import `runtime_state` (loop-driven switching is not grower-chosen state); restore runs once in `create_app` (the mock's boot slot). Disabling the loop turns relays off synchronously in the handler, then the engine's one-shot latch (`relays_latched`) holds them off exactly once — after that hand-set positions survive. Force handlers (`GET /?force=1`, `GET /sensors?force=1`) tick the unit's **long-lived** engine from `app.state.simulation`, never a throwaway instance — a fresh engine would re-run the one-off relay wipe on every forced read
+- **Packaging lives in `mushpi-ops`, not here — treat the CLI script name and the Python floor as a published interface.** Details: `REFERENCE.md` § Packaging & the ops image contract
 
 ## When the Agent Runs
 

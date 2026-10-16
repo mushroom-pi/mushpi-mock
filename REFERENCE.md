@@ -110,3 +110,18 @@ The project owner knows TypeScript + NestJS deeply but is learning Python. All c
 - Class/function docstrings explaining purpose
 - Comments on non-obvious lines with TypeScript parallels when helpful
 - A summary at the end of each build session covering what was done and key Python concepts used
+
+## Packaging & the ops image contract
+
+**This repo carries no packaging.** The demo mock image is built and published from `mushpi-ops`, which materializes `mushpi-mock/` as a **build input** — exactly as the hub image consumes `mushpi-server/` and `mushpi-client/`. There is deliberately no `Dockerfile`, no `.github/workflows/`, and no CI here. Before adding any of them, check `mushpi-ops/REFERENCE.md` § Demo stack & the mock image: the image already exists and this is the wrong place for it.
+
+Two facts in `pyproject.toml` are a **consumed interface**, because `mushpi-ops/Dockerfile.mock` builds against them. Both are build-guarded, so a mistake fails CI rather than a running demo:
+
+| Fact | Guard | What breaks if you change it |
+|---|---|---|
+| `[project.scripts] mushpi-mock = "mushpi_mock.main:cli"` | `RUN mushpi-mock --help` runs during the image build | Renaming the script — or breaking the import chain behind it — **fails the ops build** (exit 127 / import error). It does not silently ship. |
+| `requires-python` | `uv sync --frozen` under `UV_PYTHON_PREFERENCE=only-system` | Raising the floor fails the ops build at install time, because the image's fixed interpreter no longer satisfies it. |
+
+The Python floor is only guarded while that `only-system` pin holds; without it, uv would fetch a uv-managed interpreter, the build would pass on an interpreter the base image does not ship, and the guard would vanish silently. If you need a third borrowed fact guarded, add the assertion to `mushpi-ops/Dockerfile.mock` rather than trusting it.
+
+Practical consequences for the mock agent: a version bump or a CLI change here may need a **corresponding ops rebuild** rather than an edit in this repo, and `mushpi-mock`'s own demo profile (five units, seeding, the drifting unit) is tracked as `mushpi-mock#3` on the project board — not in the ops stack.
