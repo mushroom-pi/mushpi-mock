@@ -10,7 +10,7 @@ These conventions are read by the `mushpi-mock` agent. The agent is a **single a
 
 ## Canonical References
 
-1. **Pico API contract**: `mushpi-grow/spec/openapi.yaml` — the mock must mirror every endpoint, request/response shape, and behavior defined here. The announce payload is documented in `components.schemas.AnnouncePayload` (it targets the *server's* URL, so it is deliberately not under `paths:`).
+1. **Pico API contract**: `mushpi-grow/spec/openapi.yaml` — the mock must mirror every endpoint, request/response shape, and behavior defined here. The announce payload is documented in `components.schemas.AnnouncePayload` (it targets the *server's* URL, so it is deliberately not under `paths:`). The unit page and its assets are mirrored the same way — vendored byte-identically under `src/mushpi_mock/static/`, with the mock-only differences applied at render time in `unit_page.py`, never in the vendored bytes.
 2. **Firmware version**: `mushpi-grow/app/state.py` → `_SOFTWARE_VERSION`, and **API contract version**: `_API_VERSION` — the mock's represented versions must always match. See Version Alignment below.
 3. **Feature design**: issue **#1** in `mushroom-pi/mushpi-mock` — "Mock Pico Units", the migrated form of roadmap #18. The old `mushpi-docs/roadmap/features/18-mock-pico-units.md` was deleted once migrated; the issue body is now the spec, and its dated comment is the completion record.
 
@@ -26,7 +26,9 @@ mushpi-mock/
 ├── LICENSE               # MIT (verbatim SPDX text)
 ├── .python-version       # Python version pin
 ├── scripts/
-│   └── check-version-alignment.sh  # grow ⇔ mock version check (run manually)
+│   ├── check-version-alignment.sh  # grow ⇔ mock version check (run manually)
+│   ├── check-unit-page-drift.sh    # vendored page assets vs grow (exit 0/1/2)
+│   └── refresh-unit-page.sh        # re-vendor from ../mushpi-grow after a page change
 ├── .venv/                # Virtual environment (auto-created by uv)
 └── src/mushpi_mock/
     ├── __init__.py        # Package docstring + `__version__` (mock's OWN version, from pyproject.toml metadata)
@@ -35,9 +37,12 @@ mushpi-mock/
     ├── config.py          # Pydantic config models
     ├── state.py           # In-memory unit state (`_SOFTWARE_VERSION` + `_API_VERSION` = represented versions)
     ├── router.py          # All Pico API endpoints + mock-only `GET /version`
+    ├── unit_page.py       # Vendored page loader + mock-only render seam
+    ├── pins.py            # Reserved-GPIO rules mirrored from grow
     ├── simulation.py      # Hysteresis control-loop sensor data generator
     ├── seed.py            # Direct SQLite bulk seeding for --seed-days
-    └── announce.py        # Server announce + retry logic
+    ├── announce.py        # Server announce + retry logic; sole writer of `hub.connected`
+    └── static/            # Byte-identical vendored page assets + VENDOR manifest
 ```
 
 ## Config Keys & CLI Flags
@@ -131,4 +136,4 @@ There is **no** pytest/ruff/mypy test suite, linter, or type checker configured 
 The two real checks, run from `mushpi-mock/`:
 
 1. **Version alignment** — run `./scripts/check-version-alignment.sh` (firmware three-way check: grow `_SOFTWARE_VERSION` vs `src/mushpi_mock/VERSION` and `src/mushpi_mock/state.py`; plus API two-way check: grow `_API_VERSION` vs `src/mushpi_mock/state.py`). Exit 0 = all aligned.
-2. **API smoke test** — start the mock and exercise the endpoints it serves (`GET /sensors`, `PUT /setpoints`, `GET /`), per `README.md` § Verification. This is the functional gate for any API change.
+2. **API smoke test** — start the mock and exercise the endpoints it serves (`GET /sensors`, `PUT /setpoints`, `GET /`, `GET /ui`, `GET /static/unit.js`), per `README.md` § Verification. This is the functional gate for any API change.

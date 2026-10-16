@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+    <title>Mushroom Pi · Unit status &amp; control</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            min-height: 100vh;
+            background: linear-gradient(180deg, #0f1720, #071013 80%);
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+            color: #E6F0EA;
+        }
+
+        .wrap {
+            max-width: 580px;
+            margin: 0 auto;
+            padding: 20px 14px 10px;
+        }
+
+        .card {
+            background: #0f1b12;
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(2, 6, 2, .45);
+            padding: 18px;
+            margin-bottom: 16px;
+        }
+
+        h1.logo {
+            font-size: 18px;
+            font-weight: 700;
+            color: #C66F2F;
+        }
+
+        .devname {
+            font-size: 16px;
+            font-weight: 700;
+            margin: 2px 0 4px;
+        }
+
+        .addr,
+        .sub {
+            font-family: monospace;
+            font-size: 12px;
+            color: #9AA6A0;
+            word-break: break-all;
+        }
+
+        .hdrrow {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        h2 {
+            font-size: 15px;
+            font-weight: 700;
+            color: #C66F2F;
+            margin-bottom: 2px;
+        }
+
+        .cardnote {
+            font-size: 12px;
+            color: #9AA6A0;
+            margin-bottom: 10px;
+        }
+
+        .row {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 5px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, .04);
+        }
+
+        .row:last-of-type {
+            border-bottom: none;
+        }
+
+        .k {
+            font-size: 13px;
+            flex: 0 0 auto;
+        }
+
+        .v {
+            font-size: 13px;
+            font-weight: 600;
+            text-align: right;
+            font-family: monospace;
+            word-break: break-all;
+        }
+
+        .why {
+            font-size: 11.5px;
+            color: #9AA6A0;
+            margin: 1px 0 6px;
+        }
+
+        .big {
+            font-size: 26px;
+            font-weight: 700;
+            color: #E6F0EA;
+        }
+
+        .alert {
+            border-left: 3px solid #7DD3FC;
+            background: rgba(124, 211, 252, .08);
+            border-radius: 6px;
+            padding: 10px 12px;
+            font-size: 13px;
+            margin: 8px 0;
+        }
+
+        .alert.warn {
+            border-color: #A27B35;
+            background: rgba(162, 123, 53, .10);
+        }
+
+        .chip {
+            display: inline-block;
+            padding: 2px 12px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+            min-width: 44px;
+            text-align: center;
+        }
+
+        .chip.on {
+            background: #3C8D5A;
+            color: #0f1720;
+        }
+
+        .chip.off {
+            background: #4a5568;
+            color: #E6F0EA;
+        }
+
+        label.fld {
+            display: block;
+            font-size: 13px;
+            margin-top: 12px;
+            margin-bottom: 4px;
+        }
+
+        input[type=range] {
+            width: 100%;
+            accent-color: #C66F2F;
+            margin-top: 6px;
+        }
+
+        input[type=number] {
+            width: 110px;
+            background: #0f1720;
+            border: 1px solid rgba(255, 255, 255, .08);
+            border-radius: 8px;
+            padding: 8px 10px;
+            color: #E6F0EA;
+            font-size: 14px;
+            outline: none;
+        }
+
+        input[type=number]:focus {
+            border-color: #C66F2F;
+        }
+
+        input[type=number]:disabled,
+        input[type=checkbox]:disabled {
+            opacity: .45;
+        }
+
+        input.switch {
+            width: auto;
+            accent-color: #C66F2F;
+            transform: scale(1.3);
+            margin: 0 10px 0 0;
+        }
+
+        .tog {
+            display: flex;
+            align-items: center;
+            padding: 7px 0;
+            font-size: 14px;
+        }
+
+        .tog .why {
+            margin: 0;
+            flex: 1;
+        }
+
+        button {
+            background: #C66F2F;
+            color: #0f1720;
+            font-weight: 700;
+            font-size: 14px;
+            border: none;
+            border-radius: 10px;
+            padding: 10px 16px;
+            cursor: pointer;
+            margin-top: 12px;
+        }
+
+        button:hover {
+            opacity: .9;
+        }
+
+        button:disabled {
+            opacity: .45;
+            cursor: default;
+        }
+
+        button.ghost {
+            background: transparent;
+            border: 1px solid #C66F2F;
+            color: #C66F2F;
+        }
+
+        button.mini {
+            padding: 6px 12px;
+            font-size: 13px;
+            margin-top: 0;
+        }
+
+        table.pin {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12.5px;
+            margin-top: 8px;
+        }
+
+        table.pin th,
+        table.pin td {
+            text-align: left;
+            padding: 4px 8px;
+            border-bottom: 1px solid rgba(255, 255, 255, .05);
+        }
+
+        table.pin th {
+            color: #9AA6A0;
+            font-weight: 600;
+            font-size: 11.5px;
+        }
+
+        .changed {
+            color: #7DD3FC;
+            font-weight: 700;
+        }
+
+        .sum {
+            font-size: 12.5px;
+            color: #9AA6A0;
+            margin-top: 8px;
+        }
+
+        .msg {
+            display: none;
+            margin-top: 10px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .msg.e {
+            color: #e5484d;
+        }
+
+        .msg.s {
+            color: #3C8D5A;
+        }
+
+        .foot {
+            text-align: center;
+            color: #9AA6A0;
+            font-size: 12px;
+            line-height: 1.6;
+            padding: 4px 0 28px;
+        }
+
+        .banner {
+            border: 1px solid #A27B35;
+            background: rgba(162, 123, 53, .12);
+        }
+
+        .banner h2 {
+            color: #A27B35;
+        }
+
+        .banner a {
+            color: #7DD3FC;
+        }
+
+        .grid2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 14px;
+            margin-top: 6px;
+        }
+
+        .pinrow {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .pinrow .nm {
+            flex: 0 0 110px;
+            font-size: 13px;
+        }
+
+        .pinrow .hint {
+            font-size: 11.5px;
+            color: #9AA6A0;
+        }
+
+        .pinrow .hint.bad {
+            color: #e5484d;
+        }
+
+        .acklbl {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            margin-top: 12px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="wrap">
+
+        <!-- ── header ── -->
+        <div class="card">
+            <h1 class="logo">🍄 Mushroom Pi 🍓 - Pico Growing Unit</h1>
+            <div class="devname" id="devname">unit</div>
+            <div class="addr" id="hdrAddr">—</div>
+            <div class="addr" id="hdrMdns"></div>
+            <div class="hdrrow">
+                <div class="sub">Self-documenting status &amp; control page · served by this device, no hub required
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;flex:0 0 auto">
+                    <button class="ghost mini" id="refreshBtn" type="button">⟳ Refresh</button>
+                </div>
+            </div>
+            <div class="sub" id="lastFetch"></div>
+            <div class="msg e" id="fetchMsg"></div>
+        </div>
+
+        <!-- ── AP-mode banner ── -->
+        <div class="card banner" id="apBanner" style="display:none">
+            <h2>Provisioning mode — view-only</h2>
+            <div class="why" style="font-size:13px">
+                This unit is waiting for Wi-Fi credentials. While it waits:
+                <ul style="margin:6px 0 6px 18px">
+                    <li>The relays are <b>OFF</b> and stay off — the control loop is not running.</li>
+                    <li>Every control on this page is locked: the unit refuses changes (HTTP 403) until it has joined a
+                        network.</li>
+                </ul>
+                <b>How to leave:</b> open the <a href="/">Wi-Fi setup form</a> (the unit's root address), enter your
+                network
+                credentials and submit. The unit saves them, reboots, and joins the network — this page then unlocks.
+                If GP0 was held LOW at boot to force provisioning: free GP0 and power-cycle the unit instead.
+            </div>
+        </div>
+
+        <!-- ── identity ── -->
+        <div class="card">
+            <h2>Identity</h2>
+            <div class="cardnote">Who this unit is, as the hub knows it.</div>
+            <div class="row"><span class="k">Board</span><span class="v" id="idBoard">—</span></div>
+            <div class="why">The physical board the firmware runs on.</div>
+            <div class="row"><span class="k">MicroPython</span><span class="v" id="idMp">—</span></div>
+            <div class="why">The interpreter flashed onto the board (mDNS needs ≥ v1.26.0 to reach this page by name).
+            </div>
+            <div class="row"><span class="k">Firmware</span><span class="v" id="idFw">—</span></div>
+            <div class="why">The Mushroom Pi growing-unit program version.</div>
+            <div class="row"><span class="k">Interface generation</span><span class="v" id="idApi">—</span></div>
+            <div class="why">The wire contract generation between this unit and a hub server — it only changes when the
+                REST API breaks compatibility.</div>
+        </div>
+
+        <!-- ── board condition ── -->
+        <div class="card">
+            <h2>Board condition</h2>
+            <div class="cardnote">The health of the computer itself — not the growing chamber.</div>
+            <div class="row"><span class="k">Time since boot</span><span class="v" id="bSince">—</span></div>
+            <div class="why">How long this session has been running, plus why the unit last rebooted.</div>
+            <div class="row"><span class="k">Board temperature</span><span class="v" id="bTemp">—</span></div>
+            <div class="why">The processor chip's own die temperature (rough, uncalibrated) — not the air temperature.
+            </div>
+            <div class="row"><span class="k">Memory</span><span class="v" id="bMem">—</span></div>
+            <div class="why">MicroPython's working heap used by the program. Free space recovers via garbage collection;
+                near-zero free means the unit is strained.</div>
+            <div class="row"><span class="k">Storage</span><span class="v" id="bFs">—</span></div>
+            <div class="why">Flash holding config.json, the firmware scripts and this page. Needs a few KB free to save
+                changes.</div>
+        </div>
+
+        <!-- ── climate ── -->
+        <div class="card">
+            <h2>Climate &amp; outputs</h2>
+            <div class="cardnote">What the sensor sees and what the relays are doing right now.</div>
+            <div class="grid2">
+                <div>
+                    <div class="big" id="cTemp">—</div>
+                    <div class="why">Air temperature at the sensor. The heater and the loop compare against the
+                        temperature target.</div>
+                </div>
+                <div>
+                    <div class="big" id="cHum">—</div>
+                    <div class="why">Relative humidity at the sensor. The humidifier runs below the humidity target, the
+                        fan above it.</div>
+                </div>
+            </div>
+            <div class="why" id="cAge">—</div>
+            <div class="row"><span class="k">Humidifier</span><span class="chip off" id="cHumidifier">OFF</span></div>
+            <div class="why">Adds moisture to the air when humidity falls under the target.</div>
+            <div class="row"><span class="k">Fan</span><span class="chip off" id="cFan">OFF</span></div>
+            <div class="why">Freshens air and damps humidity when it rises above the target.</div>
+            <div class="row"><span class="k">Heater</span><span class="chip off" id="cHeater">OFF</span></div>
+            <div class="why">Warms the chamber when temperature falls under the target.</div>
+            <div class="row"><span class="k">Sensor health</span><span class="chip on" id="cSensorChip">OK</span></div>
+            <div class="why">The DHT11 reading the unit reports as its latest measurement.</div>
+            <div class="alert warn" id="cSensorAlert" style="display:none"></div>
+            <div class="why"><b>Note:</b> if the sensor ever fails, the control loop keeps running on the last good
+                reading
+                — it does not stop regulating, and it cannot tell a faulted sensor from a working one. Watch this card
+                after a failure: the numbers below may be stale.</div>
+        </div>
+
+        <!-- ── controls ── -->
+        <div class="card">
+            <h2>Controls</h2>
+            <div class="cardnote">The automatic regulation switch and its targets. Nothing is sent until you press
+                Apply.</div>
+            <div class="alert" id="ctlAlert">Loading…</div>
+            <div class="tog">
+                <input type="checkbox" class="switch" id="loopChk">
+                <span class="k">Control loop</span>&nbsp;<span class="why" style="flex:1">On = the unit drives the
+                    devices automatically toward the targets. Off = relays are forced OFF and devices are hand-switched
+                    below.</span>
+            </div>
+            <label class="fld" for="tempSl">Target temperature <span class="v" id="tempVal">—</span></label>
+            <div class="why">The loop heats below this; whole degrees, 0–50 °C. Disabled while the loop is off.</div>
+            <input type="range" id="tempSl" min="0" max="50" step="1" value="25">
+            <label class="fld" for="humSl">Target humidity <span class="v" id="humVal">—</span></label>
+            <div class="why">The loop humidifies below and fans above this; whole percent, 10–90. Disabled while the
+                loop is off.</div>
+            <input type="range" id="humSl" min="10" max="90" step="1" value="60">
+            <div class="sum" id="ctlSum">No changes to send.</div>
+            <button type="button" id="ctlSave" disabled>Apply controls</button>
+            <div class="msg" id="ctlMsg"></div>
+        </div>
+
+        <!-- ── devices ── -->
+        <div class="card">
+            <h2>Devices</h2>
+            <div class="cardnote">Hand-switch the relays when the loop is off. Nothing is sent until you press Apply.
+            </div>
+            <div class="alert" id="devAlert">Loading…</div>
+            <div class="tog">
+                <input type="checkbox" class="switch" id="dev-humidifier">
+                <span class="k">Humidifier</span>&nbsp;<span class="why" style="flex:1">On = relay energised now (the
+                    polarity setting decides what the relay module sees).</span>
+            </div>
+            <div class="tog">
+                <input type="checkbox" class="switch" id="dev-fan">
+                <span class="k">Fan</span>&nbsp;<span class="why" style="flex:1">On = relay energised now.</span>
+            </div>
+            <div class="tog">
+                <input type="checkbox" class="switch" id="dev-heater">
+                <span class="k">Heater</span>&nbsp;<span class="why" style="flex:1">On = relay energised now.</span>
+            </div>
+            <div class="why" id="devWhy"></div>
+            <div class="sum" id="devSum">No changes to send.</div>
+            <button type="button" id="devSave" disabled>Apply devices</button>
+            <div class="msg" id="devMsg"></div>
+            <div class="why">Hand-set positions are <b>temporary</b>: they last until the loop is re-enabled — the loop
+                immediately reclaims control of all three devices and drives them from the targets. Turning the loop off
+                forces every relay off first.</div>
+        </div>
+
+        <!-- ── pin mapping ── -->
+        <div class="card">
+            <h2>PIN mapping</h2>
+            <div class="cardnote">Which GPIO pin drives which device. A saved change is written to flash and survives
+                reboot.</div>
+            <div class="alert warn">Changing pin assignments will physically alter which GPIO pins control your devices.
+                Incorrect pin assignments can cause hardware malfunction. Proceed with caution.</div>
+            <div class="why" style="margin-top:8px">Valid user GPIOs — pick only from these:</div>
+            <table class="pin">
+                <tr>
+                    <th>Pins</th>
+                    <th>Status</th>
+                </tr>
+                <tr>
+                    <td>GP1 – GP22</td>
+                    <td>usable</td>
+                </tr>
+                <tr>
+                    <td>GP26, GP27, GP28</td>
+                    <td>usable</td>
+                </tr>
+                <tr>
+                    <td>GP0</td>
+                    <td>refused — reserved for the force-provision jumper (read at every boot)</td>
+                </tr>
+                <tr>
+                    <td>GP23 – GP25</td>
+                    <td>refused — reserved for the CYW43439 wireless chip</td>
+                </tr>
+                <tr>
+                    <td>GP29</td>
+                    <td>refused — reserved for the CYW43439 wireless chip</td>
+                </tr>
+            </table>
+            <div class="why" style="margin-top:6px">Factory defaults: DHT11 GP4 · Humidifier GP6 · Fan GP7 · Heater GP8.
+            </div>
+            <label class="acklbl"><input type="checkbox" class="switch" id="mapAck">I understand the risks and have
+                verified my wiring</label>
+            <div class="why" id="mapWhy">Tick the box to unlock the fields below.</div>
+            <div class="pinrow"><span class="nm">DHT11 sensor</span><input type="number" id="pin-dht" min="1" max="28"
+                    disabled><span class="hint" id="hint-dht">Valid GPIO: 1–22, 26, 27, 28</span></div>
+            <div class="pinrow"><span class="nm">Humidifier</span><input type="number" id="pin-humidifier" min="1"
+                    max="28" disabled><span class="hint" id="hint-humidifier">Valid GPIO: 1–22, 26, 27, 28</span></div>
+            <div class="pinrow"><span class="nm">Fan</span><input type="number" id="pin-fan" min="1" max="28"
+                    disabled><span class="hint" id="hint-fan">Valid GPIO: 1–22, 26, 27, 28</span></div>
+            <div class="pinrow"><span class="nm">Heater</span><input type="number" id="pin-heater" min="1" max="28"
+                    disabled><span class="hint" id="hint-heater">Valid GPIO: 1–22, 26, 27, 28</span></div>
+            <div class="why" style="margin-top:10px">Current → proposed:</div>
+            <table class="pin">
+                <tr>
+                    <th>Device</th>
+                    <th>Current</th>
+                    <th>Proposed</th>
+                </tr>
+                <tr>
+                    <td>DHT11 sensor</td>
+                    <td id="cur-dht">—</td>
+                    <td id="prp-dht">—</td>
+                </tr>
+                <tr>
+                    <td>Humidifier</td>
+                    <td id="cur-humidifier">—</td>
+                    <td id="prp-humidifier">—</td>
+                </tr>
+                <tr>
+                    <td>Fan</td>
+                    <td id="cur-fan">—</td>
+                    <td id="prp-fan">—</td>
+                </tr>
+                <tr>
+                    <td>Heater</td>
+                    <td id="cur-heater">—</td>
+                    <td id="prp-heater">—</td>
+                </tr>
+            </table>
+            <div class="sum" id="mapSum">No changes to send.</div>
+            <button type="button" id="mapSave" disabled>Save mapping</button>
+            <div class="msg" id="mapMsg"></div>
+            <div class="why">The unit refuses a change that would put two devices on one pin, and refuses reserved pins.
+                A saved mapping is persisted to config.json — <b>it survives a reboot</b>. After changing wiring
+                physically, save here and verify the devices behave on the new pins.</div>
+        </div>
+
+        <!-- ── hub ── -->
+        <div class="card">
+            <h2>Hub</h2>
+            <div class="cardnote">Connection to the central hub server, if one is configured.</div>
+            <div class="row"><span class="k">Hub configured</span><span class="chip off" id="hubCfgChip">—</span></div>
+            <div class="why">Whether config.json carries a hub address at all.</div>
+            <div class="row"><span class="k">Hub acknowledged</span><span class="chip off" id="hubConnChip">—</span>
+            </div>
+            <div class="why">This reflects the most recent <b>announce</b> (sent at boot/reboot) and whether the hub
+                accepted it.
+                Be honest about what this does not mean: the unit never pings the hub between announcements, so a hub
+                outage after the ack is <b>invisible</b> here. The hub keeps its own view fresh by polling this unit
+                about once a minute.</div>
+            <div class="sum" id="hubState">—</div>
+        </div>
+
+        <!-- ── reboot ── -->
+        <div class="card" id="card-reboot">
+            <h2>Reboot</h2>
+            <div class="cardnote">Restart the unit. A soft reboot is faster and preserves cumulative uptime; a hard
+                reboot
+                is a full power-cycle.</div>
+            <button type="button" id="rebootSoft">Soft reboot</button>&nbsp;<button type="button" class="ghost"
+                id="rebootHard">Hard reboot</button>
+            <div class="why" style="margin-top:8px">Soft — <code>machine.soft_reset()</code>: restarts the program,
+                keeps
+                cumulative uptime, reconnects Wi-Fi and re-announces to the hub. Hard — <code>machine.reset()</code>:
+                full power-cycle, uptime counters reset to zero. Either way the unit is unreachable for about a minute
+                and relays are forced safe during the restart.</div>
+            <div class="msg" id="rebootMsg"></div>
+        </div>
+
+        <!-- ── footer ── -->
+        <div class="foot">
+            Served by the unit itself — no sign-in, no internet access, local network only.<br>
+            Raw data lives at <code>/</code> (JSON) and the sub-endspoints
+            <code>/system · /health · /sensors · /outputs · /control · /setpoints · /setup</code>.<br>
+            <b>Not on this page — hub-only features:</b> batches &amp; recipes, historical readings and charts, the
+            monitored power switch, renaming the unit / description / colour, and removing units from the fleet.
+            Those require the hub dashboard.<br>
+            <span id="footVer"></span>
+        </div>
+    </div>
+
+    <script>window.__UNIT__ = {mode:"MODE", name:"DEVNAME"};</script>
+    <script src="/static/unit.js"></script>
+</body>
+
+</html>

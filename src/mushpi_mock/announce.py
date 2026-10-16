@@ -49,6 +49,13 @@ async def announce_once(
     Returns (success, pico_unit_id). On HTTP 2xx, parses the response body
     for the unit's database ID. On failure, returns (False, None).
 
+    Single writer of the hub state: this function (and its retry wrapper) is the
+    ONLY place `state.hub` is mutated, mirroring the firmware where only
+    `announce_then_retry_once` writes `hub` (see mushpi-grow/app/state.py —
+    "mutated IN PLACE, single writer: app/announce.py"). `connected` therefore
+    means "the hub acknowledged our most recent announce" — never live
+    reachability — and GET / surfaces exactly that.
+
     The payload shape must match AnnouncePicoUnitDto on the server and
     spec/openapi.yaml → components.schemas.AnnouncePayload (canonical docs).
     Key order mirrors the firmware's payload() exactly (mushpi-grow/app/announce.py):
@@ -100,15 +107,22 @@ async def announce_once(
                 # Server returns the full PicoUnit object — extract the ID
                 body = resp.json()
                 unit_id: int | None = body.get("id")
+                # Hub ACKED the most recent announce (mirrors the firmware setting
+                # hub["connected"] on a 2xx). Mutated in place, never reassigned.
+                state.hub["connected"] = True
                 print(f"  [{state.handle}] Announced successfully to {url} "
                       f"(unit_id={unit_id})")
                 return True, unit_id
             else:
+                # A non-2xx clears the ack flag — same as the firmware clearing
+                # `connected` after each failed attempt.
+                state.hub["connected"] = False
                 print(
                     f"  [{state.handle}] Announce failed: HTTP {resp.status_code}"
                 )
                 return False, None
     except Exception as e:
+        state.hub["connected"] = False
         print(f"  [{state.handle}] Announce error: {e}")
         return False, None
 
@@ -136,11 +150,27 @@ async def announce_with_retry(
             const result = await this.announceWithRetry();
             // result = { ok: boolean, unitId: number | null }
         }
+
+    Hub-state single writer, loop start (firmware parity): `configured` reflects
+    whether a hub address exists at all, and `connected` is CLEARED here because
+    a fresh announce cycle means the previous ack no longer describes the most
+    recent announce. The unit never pings the hub between announcements, so
+    between attempts `connected` can only mean "the last attempt was acked".
     """
+    # AP provisioning mode never announces — a unit only announces itself to a
+    # hub in normal (STA) mode. The mock presents as STA today; the guard keeps
+    # the mirrored behaviour honest if AP is ever enabled.
+    if state.mode == "ap":
+        return False, None
+
+    state.hub["configured"] = bool(server_url)
+    state.hub["connected"] = False
+
     for attempt, delay in enumerate(_BACKOFF_SCHEDULE):
         ok, unit_id = await announce_once(state, server_url, hub_secret, announce_ip)
         if ok:
             return True, unit_id
+
 
         if attempt < len(_BACKOFF_SCHEDULE) - 1:
             print(

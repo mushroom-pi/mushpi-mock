@@ -34,14 +34,37 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from . import __version__ as _MOCK_VERSION
+from . import unit_page
+from .pins import PIN_ROLES, VALID_GPIO_HINT, gpio_reject_reason
 from .state import _API_VERSION, _SOFTWARE_VERSION, UnitState
 
 router = APIRouter()
+
+# AP provisioning is view-only: every control POST is refused with this 403 body
+# before any side effect. Copied verbatim from the firmware's `_AP_VIEW_ONLY_ERROR`
+# (app/api.py) so the wire body matches a unit's. The mock presents as a STA unit
+# (`UnitState.mode` is always "sta" — there is no AP entry point), so this guard
+# is mirrored contract shape rather than reachable behaviour; it exists so the
+# mirrored surface matches the spec's documented 403s as real code.
+_AP_VIEW_ONLY_ERROR = {
+    "ok": False,
+    "error": "controls are only available in STA mode - AP provisioning is view-only",
+}
+
+
+def _ap_view_only() -> JSONResponse:
+    """The firmware's AP-mode refusal: 403 + `{"ok": false, "error": …}`.
+
+    `JSONResponse` (not `HTTPException`) so the body is the firmware's shape —
+    `HTTPException` would emit `{"detail": ...}` instead.
+    """
+    return JSONResponse(status_code=403, content=_AP_VIEW_ONLY_ERROR)
+
 
 
 # ── Request body DTOs ─────────────────────────────────────────────────────
@@ -102,22 +125,6 @@ class ControlDto(BaseModel):
     humidity_deadband: int | None = Field(None, ge=0, description="Humidity deadband (v0.8.0+)")
     temperature_deadband: int | None = Field(None, ge=0, description="Temperature deadband (v0.8.0+)")
     min_runtime: int | None = Field(None, ge=0, description="Minimum relay runtime seconds (v0.8.0+)")
-
-
-class PinsDto(BaseModel):
-    """GPIO pin mapping for POST /setup."""
-
-    dht: int | None = Field(None, ge=1, le=29)
-    humidifier: int | None = Field(None, ge=1, le=29)
-    fan: int | None = Field(None, ge=1, le=29)
-    heater: int | None = Field(None, ge=1, le=29)
-
-
-class SetupDto(BaseModel):
-    """POST /setup body — GPIO pin mapping and relay polarity."""
-
-    pins: PinsDto | None = None
-    active_high: bool | None = None
 
 
 class RebootDto(BaseModel):
@@ -217,6 +224,45 @@ async def version() -> VersionInfoDto:
     )
 
 
+# ── Unit page endpoints ──────────────────────────────────────────────────
+
+
+@router.get("/ui", response_model=None)
+async def get_ui(request: Request) -> Response:
+    """The on-unit status-and-control page — always ``text/html``.
+
+    Mirrors the firmware's ``GET /ui``: the vendored page (a byte-identical copy
+    of ``mushpi-grow/app/unit.html``) rendered for THIS unit, with the mock's
+    simulated labels applied at render time (see ``unit_page``). The bootstrap is
+    substituted per unit — ``DEVNAME`` becomes this unit's handle and the page's
+    relative fetches (`/`, `/control`, `/static/unit.js`, …) address this unit's
+    own origin — so every running mock unit serves its own page over its own
+    state, with no hub and no internet required.
+
+    NestJS mapping: a controller returning a view instead of a DTO — here we hand
+    back a raw ``Response`` (``response_model=None``) because the route does not
+    answer JSON.
+    """
+    state = _get_state(request)
+    return unit_page.unit_page_response(state.mode, state.handle)
+
+
+@router.get("/static/{filename}", response_model=None)
+async def get_static(filename: str) -> Response:
+    """Same-origin page assets — ``unit.js`` and ``favicon.svg``.
+
+    Mirrors the firmware's ``GET /static/<string:filename>``. The `{filename}`
+    path parameter matches a single path component and the handler resolves it
+    only through a closed allowlist, so no filesystem path is ever built from the
+    request string — the mock's equivalent of the firmware's `<string:…>` segment
+    type that keeps a path-traversal shape out of the route. Anything else (and
+    the page itself) is a 404 with the firmware's `{"ok": false, "error":
+    "static asset missing"}` body. Neither the hub nor the server consumes these
+    paths — they are page surface only.
+    """
+    return unit_page.static_response(filename)
+
+
 # ── Sensor endpoints ──────────────────────────────────────────────────────
 
 
@@ -247,15 +293,20 @@ async def get_setpoints(request: Request) -> dict[str, int]:
     return dict(state.setpoints)
 
 
-@router.post("/setpoints")
-@router.put("/setpoints")
-async def update_setpoints(request: Request, dto: SetpointsDto) -> dict[str, int]:
+@router.post("/setpoints", response_model=None)
+@router.put("/setpoints", response_model=None)
+async def update_setpoints(request: Request, dto: SetpointsDto) -> dict[str, int] | JSONResponse:
     """Update temperature and/or humidity setpoints.
 
     The firmware immediately re-evaluates hysteresis when setpoints change
     (if control is enabled). We don't simulate hysteresis in the mock.
+
+    AP mode: refused with 403 BEFORE any mutation (the firmware's view-only
+    guard — mirrored contract shape; the mock always presents as STA).
     """
     state = _get_state(request)
+    if state.mode == "ap":
+        return _ap_view_only()
     if dto.temperature is not None:
         state.setpoints["temperature"] = dto.temperature
     if dto.humidity is not None:
@@ -274,37 +325,55 @@ async def get_outputs(request: Request) -> dict[str, bool]:
     return dict(state._outputs)
 
 
-@router.post("/outputs")
-@router.put("/outputs")
-async def update_outputs(request: Request, dto: OutputsDto) -> dict[str, Any]:
-    """Set relay states.
+@router.post("/outputs", response_model=None)
+@router.put("/outputs", response_model=None)
+async def update_outputs(request: Request, dto: OutputsDto) -> dict[str, Any] | JSONResponse:
+    """Set relay states (manual switching).
 
-    The firmware requires ALL three fields (fan, humidifier, heater).
-    We mirror that validation — missing fields return 422.
+    Mirrors the firmware's `_setoutputs`: individual keys are OPTIONAL — only the
+    keys present in the body are applied (bool-coerced like the firmware, so an
+    explicit `null` means OFF), omitted relays keep their current state, and at
+    least one key is required. The response always reports all three relays read
+    back from the unit's state — that is what the page shows after a save ("the
+    state the mock reports back").
+
+    The unit page's Devices card sends only the *changed* switches, so a body
+    like `{"humidifier": true}` is the normal case. An earlier revision required
+    all three fields and rejected exactly that, which broke hand-switching.
+
+    Empty body: 422 with the firmware's `{"ok": false, "error": ...}` shape
+    (JSONResponse, not HTTPException — the page surfaces the reason).
+    AP mode: refused with 403 BEFORE any relay write (the firmware's view-only
+    guard — mirrored contract shape; the mock always presents as STA).
     """
     state = _get_state(request)
+    if state.mode == "ap":
+        return _ap_view_only()
 
-    # The firmware requires all three fields — mirror that validation
-    errors: list[str] = []
-    if dto.humidifier is None:
-        errors.append('the body needs to include "humidifier" status (true/false)')
-    if dto.fan is None:
-        errors.append('the body needs to include "fan" status (true/false)')
-    if dto.heater is None:
-        errors.append('the body needs to include "heater" status (true/false)')
-    if errors:
-        raise HTTPException(status_code=422, detail=errors[0])
+    # Presence, not truthiness: `model_fields_set` is the set of keys this
+    # request explicitly carried — the Pydantic equivalent of the firmware's
+    # `if k in data` membership test.
+    valid_keys = ("humidifier", "fan", "heater")
+    provided = [key for key in valid_keys if key in dto.model_fields_set]
+    if not provided:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "ok": False,
+                "error": 'the body must include at least one of: "humidifier", "fan", "heater"',
+            },
+        )
 
-    state._outputs["fan"] = dto.fan  # type: ignore[assignment]
-    state._outputs["humidifier"] = dto.humidifier  # type: ignore[assignment]
-    state._outputs["heater"] = dto.heater  # type: ignore[assignment]
+    # Apply only the provided relays; omitted relays keep their current state.
+    for key in provided:
+        state._outputs[key] = bool(getattr(dto, key))  # firmware: bool(provided[k])
 
     print(f"  [{state.handle}] Outputs updated: {state._outputs}")
     return {
         "ok": True,
-        "fan": dto.fan,
-        "humidifier": dto.humidifier,
-        "heater": dto.heater,
+        "fan": state._outputs["fan"],
+        "humidifier": state._outputs["humidifier"],
+        "heater": state._outputs["heater"],
     }
 
 
@@ -323,15 +392,21 @@ async def get_control(request: Request) -> dict[str, bool]:
     return {"enabled": state.control_enabled}
 
 
-@router.post("/control")
-@router.put("/control")
-async def update_control(request: Request, dto: ControlDto) -> dict[str, Any]:
+@router.post("/control", response_model=None)
+@router.put("/control", response_model=None)
+async def update_control(request: Request, dto: ControlDto) -> dict[str, Any] | JSONResponse:
     """Enable/disable the control loop and/or update hysteresis parameters.
 
     The firmware calls relays_off() when disabling. We just update the flag.
     All fields are optional — only provided fields are updated (partial PATCH).
+
+    AP mode: refused with 403 BEFORE the enable flag changes and before relays
+    are touched (the firmware's view-only guard — mirrored contract shape; the
+    mock always presents as STA).
     """
     state = _get_state(request)
+    if state.mode == "ap":
+        return _ap_view_only()
     if dto.enabled is not None:
         state.control_enabled = dto.enabled
     if dto.period_s is not None:
@@ -366,48 +441,99 @@ async def get_setup(request: Request) -> dict[str, Any]:
 
 @router.post("/setup", response_model=None)
 @router.put("/setup", response_model=None)
-async def update_setup(request: Request, dto: SetupDto) -> dict[str, Any] | JSONResponse:
-    """Update GPIO pin mapping and/or relay polarity.
+async def update_setup(request: Request) -> dict[str, Any] | JSONResponse:
+    """Update GPIO pin mapping and/or relay polarity (full-parity validation).
 
     The firmware persists this to flash (config.json). The mock just
-    updates in-memory state.
+    updates in-memory state — and, unlike a unit, that state is lost when the
+    mock stops (disclosed on the page).
 
-    Mirrors the firmware's `_setdevices` GPIO-conflict validation: a
-    request that would leave two functions on one GPIO is rejected with
-    400 `{"ok": False, "error": "GPIO <pin> is already assigned to <device>"}`
-    BEFORE any mutation, so a rejected request leaves state unchanged.
-    Checked against a merged view (current mapping overlaid with this
-    request's keys), so re-assigning a device to its own pin is a no-op,
-    a pin freed by another device in the same request is free, and
-    pre-existing duplicates this request does not touch pass. The
-    semantics of this rule set are deliberately duplicated (firmware,
-    server util, mock) and must stay locked together.
+    The body is read RAW (`await request.json()`), not through a Pydantic DTO.
+    The firmware validates every pin in-handler with its `gpio_reject_reason()`
+    and shapes its own `400` bodies, so mirroring that behaviour means the same
+    values must reach the same Python code — a `SetupDto` with `int` fields would
+    pre-empt that with FastAPI's `422 {"detail": ...}`, which is why reserved
+    pins like GP23 (inside the old `le=29` bound) were never refused at all and
+    GP0 got the wrong shape. This is the deliberate closure of the pre-existing
+    422-vs-400 fidelity note: the requirement cannot be met while Pydantic owns
+    the pin type.
 
-    `JSONResponse` (not `HTTPException`) carries the 400: HTTPException
-    would emit `{"detail": ...}` while the firmware emits
-    `{"ok": False, "error": ...}` — the mock must match the wire body.
-    `response_model=None` on the decorators lets FastAPI accept the
-    `dict | JSONResponse` return annotation.
+    Rule order mirrors the firmware's `_setdevices`:
+      1. non-dict body → 400; `pins` present but not a dict → 400
+         `"pins must be a dict"`;
+      2. per-role `gpio_reject_reason()` in PIN_ROLES order — a non-whole number,
+         a reserved GPIO (GP0, GP23–25, GP29) or an off-board value → 400
+         `"pins.<key> - <reason> (valid user GPIOs are 1-22, 26, 27 and 28)"`;
+      3. the merged-view duplicate rule — a request that would leave two
+         functions on one GPIO is rejected with 400
+         `"GPIO <pin> is already assigned to <device>"`, checked against a
+         merged view (current mapping overlaid with this request's keys) so
+         re-assigning a device to its own pin is a no-op, a pin freed by another
+         device in the same request is free, and pre-existing duplicates this
+         request does not touch pass;
+      4. only then `active_high` (bool-coerced), then the pin writes.
+
+    All checks run BEFORE any mutation, so a refused request leaves the mapping
+    unchanged. The semantics of rules 2–3 are deliberately duplicated (firmware
+    `app/api.py` + `app/config_validator.py`, server setup proxy, this mock) and
+    must stay locked together. The firmware's separate, STRICTER boot rule (two
+    roles sharing a GPIO in the effective config map is fatal) is NOT mirrored
+    here — the mock has no boot-time config validation.
+
+    `JSONResponse` (not `HTTPException`) carries the 400: HTTPException would
+    emit `{"detail": ...}` while the firmware emits `{"ok": False, "error": ...}`
+    — the mock must match the wire body. `response_model=None` lets FastAPI
+    accept the `dict | JSONResponse` return annotation.
+
+    AP mode: refused with 403 BEFORE any pin remap, polarity mutation or
+    config write (the firmware's view-only guard — mirrored contract shape; the
+    mock always presents as STA).
     """
     state = _get_state(request)
+    if state.mode == "ap":
+        return _ap_view_only()
 
-    # Control keys in the firmware's fixed scan order (first hit wins).
-    control_keys = ("dht", "humidifier", "fan", "heater")
+    # Raw body, exactly like the firmware's `req.json`. Invalid JSON or a
+    # non-object body is a 400 with the firmware's `{"ok": False, "error": ...}`
+    # shape (the firmware's own outer try/except does the same).
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "error": "invalid JSON body"},
+        )
+    if not isinstance(data, dict):
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "error": "body must be a dict"},
+        )
 
-    if dto.pins is not None:
-        # Incoming keys only (None = not provided), same fixed order.
-        incoming: dict[str, int] = {
-            key: value
-            for key, value in dto.pins.model_dump().items()
-            if value is not None
-        }
-        # Merged view: current mapping overlaid with this request's keys.
+    if "pins" in data:
+        pins = data["pins"]
+        if not isinstance(pins, dict):
+            return JSONResponse(
+                status_code=400,
+                content={"ok": False, "error": "pins must be a dict"},
+            )
+        # 2. per-role assignable-GPIO check, firmware scan order (first hit wins).
+        for key in PIN_ROLES:
+            if key in pins:
+                reason = gpio_reject_reason(pins[key])
+                if reason is not None:
+                    return JSONResponse(
+                        status_code=400,
+                        content={
+                            "ok": False,
+                            "error": f"pins.{key} - {reason} ({VALID_GPIO_HINT})",
+                        },
+                    )
+        # 3. merged-view duplicate rule (incoming keys only, same fixed order).
+        incoming: dict[str, int] = {key: pins[key] for key in PIN_ROLES if key in pins}
         merged = {**state.devices["pins"], **incoming}
-        # Reject updates that would leave two functions on one GPIO,
-        # before any mutation (mirrors firmware _setdevices).
         for key in incoming:
             pin = incoming[key]
-            for other in control_keys:
+            for other in PIN_ROLES:
                 if other != key and merged.get(other) == pin:
                     return JSONResponse(
                         status_code=400,
@@ -417,22 +543,19 @@ async def update_setup(request: Request, dto: SetupDto) -> dict[str, Any] | JSON
                         },
                     )
 
-    if dto.active_high is not None:
-        state.devices["active_high"] = dto.active_high
+    # 4. active_high only after every pin check passed (firmware ordering).
+    if "active_high" in data:
+        state.devices["active_high"] = bool(data["active_high"])
 
-    if dto.pins is not None:
-        pins = dto.pins
-        if pins.dht is not None:
-            state.devices["pins"]["dht"] = pins.dht
-        if pins.humidifier is not None:
-            state.devices["pins"]["humidifier"] = pins.humidifier
-        if pins.fan is not None:
-            state.devices["pins"]["fan"] = pins.fan
-        if pins.heater is not None:
-            state.devices["pins"]["heater"] = pins.heater
+    if "pins" in data and isinstance(data["pins"], dict):
+        for key in PIN_ROLES:
+            if key in data["pins"]:
+                # Values are validated ints by now (gpio_reject_reason above).
+                state.devices["pins"][key] = data["pins"][key]
 
     print(f"  [{state.handle}] Setup updated: {state.devices}")
     return dict(state.devices)
+
 
 
 # ── Reboot endpoint ───────────────────────────────────────────────────────
@@ -456,18 +579,44 @@ async def reboot(request: Request, dto: RebootDto) -> dict[str, str]:
 # ── Root endpoint (full snapshot) ─────────────────────────────────────────
 
 
-@router.get("/")
-async def get_all(request: Request, force: str | None = None) -> dict[str, Any]:
+@router.get("/", response_model=None)
+async def get_all(request: Request, force: str | None = None) -> dict[str, Any] | Response:
     """Full system snapshot — everything the server's cron poller needs.
 
     This is the most important endpoint: the server polls GET / every 60s
     to create Readings rows. The response shape must match exactly what
-    ReadingsService.createFromDeviceResponse() expects.
+    ReadingsService.createFromDeviceResponse() expects, including the additive
+    `hub: {configured, connected}` object (connected = the hub acknowledged the
+    MOST RECENT announce — not live reachability).
+
+    Content negotiation mirrors the firmware's `_get_all` **verbatim, strict on
+    purpose**: the page is returned only when the request's Accept header
+    contains `text/html` AND does not mention `application/json` — everything
+    else keeps getting JSON. The hub's axios poll sends
+    `application/json, text/plain, */*` and must keep getting JSON; a browser
+    navigating here gets the same page `GET /ui` serves. The comparison is a
+    plain case-sensitive substring test on the header value, exactly as the
+    firmware does it, so the mock can never diverge from a unit on who gets the
+    page — including not "improving" the heuristic.
+
+    `?force=1` applies to the JSON snapshot only (it drives the simulation
+    tick for a fresh reading); it is irrelevant to serving the static page.
+
+    NestJS analogy: one route, two representations — like a controller method
+    returning either a serialized DTO or a rendered view based on `@Accepts()`.
+    `response_model=None` is required because the handler may return a raw
+    `Response`.
     """
     state = _get_state(request)
+
+    accept = request.headers.get("accept") or ""
+    if "text/html" in accept and "application/json" not in accept:
+        return unit_page.unit_page_response(state.mode, state.handle)
+
     if force:
         from .simulation import SimulationEngine
 
         engine = SimulationEngine(state)
         await engine.tick()
     return state.get_full_snapshot()
+

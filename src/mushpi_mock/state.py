@@ -34,6 +34,24 @@ _SOFTWARE_VERSION = "0.8.4"
 # (AnnouncePayload + GET / schemas).
 _API_VERSION = 1
 
+# The board the mock simulates, as the identity the page/hub report.
+# SINGLE SOURCE OF TRUTH: `_system_info["hardware"]["board"]` is the only writer
+# of this value, and `GET /`, `GET /system` and the announce payload all read it
+# from there — so the three can never disagree about which board is claimed.
+# Requirement: identify as a Pico 2 W (the board represented), AND carry the
+# simulated marker in the API-visible value, not only in the page's labels.
+# The string stays well inside the server's announce `@Length(1, 255)` bound on
+# the board field and is free text (no enum, no pattern) — verified against
+# mushpi-server/src/modules/pico-units/pico-unit.dto.ts.
+_BOARD_IDENTITY = "Raspberry Pi Pico 2 W with RP2350 (simulated)"
+
+# The operating mode the unit presents. Mirrors the firmware's `make_app(mode=…)`
+# argument, which drives the page bootstrap and the AP view-only guards.
+# The mock ships as a STA (normal, hub-announcing) unit; there is no entry point
+# that selects "ap" — the guards exist so the mirrored contract shape (AP control
+# POSTs refuse with 403) is real code rather than an unimplemented promise.
+_STA_MODE = "sta"
+
 
 class UnitState:
     """All in-memory state for one mock Pico unit.
@@ -42,10 +60,18 @@ class UnitState:
         - status    → self._sensors + self._outputs
         - setpoints → self.setpoints
         - devices   → self.devices
-    Plus additional state for uptime, system info, and control loop.
+        - hub       → self.hub (single writer: announce.py; mutated in place)
+    Plus additional state for uptime, system info, control loop, and the
+    operating mode (`self.mode`) the page bootstraps in.
     """
 
-    def __init__(self, handle: str, port: int, announce_ip: str | None = None) -> None:
+    def __init__(
+        self,
+        handle: str,
+        port: int,
+        announce_ip: str | None = None,
+        hub_configured: bool = True,
+    ) -> None:
         """Build the in-memory state for one unit.
 
         Args:
@@ -54,10 +80,26 @@ class UnitState:
             announce_ip: IPv4 address to report in `_system_info["wifi"]["ip"]`,
                 mirroring what announce.py sends as the unit's `ip`. Falls back
                 to "127.0.0.1" when unset (the original hardcoded value).
+            hub_configured: Whether this unit has a hub address at all. Mirrors
+                the firmware's `bool(cfg.get("hub_url"))` — `hub.configured` on
+                `GET /` and the page's Hub card derive from it. `main.py` passes
+                `bool(server_url)`; defaults True because every mock unit
+                announces to the hub by default.
         """
         self.handle = handle
         self.port = port
         self.boot_time = time.time()
+
+        # ── Operating mode (firmware make_app parity) ──
+        # The mock presents as a normal STA unit; no entry point selects "ap".
+        self.mode: str = _STA_MODE
+
+        # ── Hub-connection state (mirrors the firmware's module-level `hub`) ──
+        # `connected` means the hub acknowledged the MOST RECENT announce — it is
+        # NOT live hub reachability and cannot reflect an outage after the ack.
+        # Single writer: announce.py (mutated in place, never reassigned).
+        self.hub: dict[str, bool] = {"configured": bool(hub_configured), "connected": False}
+
 
         # ── Sensors (mirrors firmware's status["temperature"], status["humidity"]) ──
         self._sensors: dict[str, Any] = {
@@ -117,8 +159,17 @@ class UnitState:
             },
             "hardware": {
                 "platform": "rp2",
-                "board": "Raspberry Pi Pico W with RP2040 (mock)",
+                # Single source: _BOARD_IDENTITY above. GET / , GET /system and
+                # the announce payload all read this one field, so they cannot
+                # drift apart on which board is claimed (AC E identity rule).
+                "board": _BOARD_IDENTITY,
                 "port": "rp2",
+                # 133 MHz is the pre-existing mock value, kept deliberately: the
+                # board identity above moved to the RP2350, but HARDWARE.md (the
+                # project's hardware source of truth) does not state a clock for
+                # it, and a real unit reports machine.freq() MEASURED. Do not
+                # invent a figure here — settling this belongs with the hardware
+                # reference, not with the page mirror.
                 "cpu": {"freq_mhz": 133},
             },
             "wifi": {
@@ -198,7 +249,8 @@ class UnitState:
         The shape must match exactly so ReadingsService.createFromDeviceResponse()
         can parse it. Key order mirrors the firmware (app/api.py GET /):
         version metadata (`firmware_version`, `api_version`) sits immediately
-        after `system`, before `health`.
+        after `system`, before `health`; the additive `hub` object is last, after
+        `control_loop_enabled`.
         """
         return {
             "system": self._system_info,
@@ -213,6 +265,12 @@ class UnitState:
             "outputs": dict(self._outputs),
             "setpoints": dict(self.setpoints),
             "control_loop_enabled": self.control_enabled,
+            # Hub-connection state (additive): {configured, connected}.
+            # `connected` is an acknowledgement of the MOST RECENT announce,
+            # written only by announce.py — never a live hub ping, so it cannot
+            # reflect a hub outage after the ack. Mirrors the firmware's `hub`
+            # object on GET /.
+            "hub": dict(self.hub),
         }
 
     # ── Simulation tick ───────────────────────────────────────────────────

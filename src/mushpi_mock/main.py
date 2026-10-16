@@ -73,7 +73,13 @@ def create_app(
             `GET /system` wifi info so both stay consistent.
     """
     state = UnitState(
-        handle=unit_config.handle, port=unit_config.port, announce_ip=announce_ip
+        handle=unit_config.handle,
+        port=unit_config.port,
+        announce_ip=announce_ip,
+        # Mirrors the firmware's `bool(cfg.get("hub_url"))`: the hub object on
+        # GET / and the page's Hub card report whether a hub address exists at
+        # all, separate from whether it has acked the latest announce.
+        hub_configured=bool(server_url),
     )
     simulation = SimulationEngine(state)
 
