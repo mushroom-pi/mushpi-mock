@@ -4,26 +4,37 @@ Vendored on-unit page — loader and the mock's render-time seam.
 NestJS mapping:
     This is a plain service module (like an ``@Injectable()`` class) that owns
     one job: turn the firmware's page bytes into an HTTP response for the mock.
-    The analog in the firmware is ``app/api.py`` — specifically the ``_unit_page()``
-    helper and the ``_static()`` route. We mirror both:
+    The analog in the firmware is ``app/api.py`` — specifically the
+    ``_unit_page()`` helper, the ``_provision_form()`` route, and the
+    ``_static()`` route. We mirror all three:
 
         firmware:  _UNIT_HTML = open('app/unit.html').read()          # load once
                    html = _UNIT_HTML.replace("MODE", mode).replace("DEVNAME", name)
+                   _PROVISIONING_HTML.replace("DEVNAME", name)
                    app.get('/static/<string:filename>') -> send_file(...)
 
         mock:      _UNIT_HTML = read vendored copy                     # load once
                    render_unit_page(mode, name) -> the same substitution
+                   render_provision_page(name)  -> the firmware's DEVNAME inject
                    static_response(filename)     -> Response w/ content type + Cache-Control
 
     FastAPI equivalent of the firmware's ``Response(html, headers=...)`` is
     ``fastapi.Response`` (the Starlette response the firmware's ``Response`` maps to).
 
 What this module is NOT
-    The page itself never lives here as a reimplementation. ``src/mushpi_mock/static/``
-    holds **byte-identical** copies of the firmware's ``app/unit.html``,
-    ``app/static/unit.js`` and ``app/static/favicon.svg`` (see ``static/VENDOR``
-    and ``scripts/check-unit-page-drift.sh``). Everything a real unit shows is
+    The pages themselves never live here as reimplementations.
+    ``src/mushpi_mock/static/`` holds **byte-identical** copies of the firmware's
+    ``app/unit.html``, ``app/static/unit.js``, ``app/static/favicon.svg`` and
+    ``app/provision.html`` (see ``static/VENDOR`` and
+    ``scripts/check-unit-page-drift.sh``). Everything a real unit shows is
     shown by those bytes, unchanged and unit-agnostic.
+
+    The provisioning form (``GET /provision``) carries **no seam at all**: the
+    only substitution it gets is the firmware's own ``DEVNAME`` injection. Its
+    form posts to ``POST /provision``, where the mock answers with the
+    firmware's STA-mode refusal — the page surfaces that ``403`` body verbatim,
+    which is exactly what a connected real unit shows. Labelling it further
+    would make the mirror less faithful, not more.
 
 The seam (the only allowed differences)
     A simulated unit must be *labelled* as simulated, and must say which of its
@@ -82,6 +93,16 @@ if _UNIT_HTML is None:
         "unit page is missing from src/mushpi_mock/static/ — "
         "run scripts/refresh-unit-page.sh (or git checkout the vendored copy)."
     )
+
+# The Wi-Fi provisioning form, loaded once like the unit page (the firmware
+# reads app/provision.html at import). Unlike unit.html, an absent copy does
+# NOT abort the boot: the form is peripheral to the mirrored surface, so the
+# route answers with the firmware-shaped JSON 404 below instead (the firmware's
+# own fallback is a 200 stub page; the mock's maintainer-approved shape for
+# this edge is the 404 — a silently served stub would hide a broken vendor).
+_PROVISION_HTML = _read_text("provision.html")
+
+_PROVISION_MISSING = {"ok": False, "error": "provisioning form missing"}
 
 # Closed asset set — the spec's /static/{filename} enum. Never a wildcard, and no
 # filesystem path is ever built from the request string: a name outside this map
@@ -176,9 +197,10 @@ def _validate_anchors() -> None:
     Two invariants, both inherited from the firmware page contract:
       1. every ``MOCK_PAGE_EDITS`` anchor occurs **exactly once**, so a label is
          never silently dropped and never applied to the wrong passage;
-      2. ``MODE`` and ``DEVNAME`` occur exactly once each in the page and never in
-         the script — the injection is load-bearing there, and this module must
-         not be what breaks it.
+      2. ``MODE`` and ``DEVNAME`` occur exactly once each in the unit page and
+         never in the script, and ``DEVNAME`` occurs exactly once in the
+         provisioning form — the injection is load-bearing there, and this
+         module must not be what breaks it.
 
     NestJS analogy: a boot-time assertion in ``onModuleInit`` that the wiring a
     route depends on still exists — better to refuse to start than to serve a
@@ -195,6 +217,11 @@ def _validate_anchors() -> None:
     for token in ("MODE", "DEVNAME"):
         if _UNIT_HTML.count(token) != 1:
             problems.append(f"page token {token} found {_UNIT_HTML.count(token)}× (expected 1)")
+    if _PROVISION_HTML is not None and _PROVISION_HTML.count("DEVNAME") != 1:
+        problems.append(
+            f"provision token DEVNAME found {_PROVISION_HTML.count('DEVNAME')}× "
+            "(expected 1)"
+        )
     unit_js = _read_text("unit.js")
     if unit_js is not None:
         for token in ("MODE", "DEVNAME"):
@@ -237,6 +264,38 @@ def render_unit_page(mode: str, device_name: str) -> str:
 def unit_page_response(mode: str, device_name: str) -> Response:
     """The page as an HTTP response — always ``text/html`` (firmware parity)."""
     return Response(content=render_unit_page(mode, device_name), media_type="text/html")
+
+
+def render_provision_page(device_name: str) -> str:
+    """Produce the provisioning form the unit would serve — unmodified bytes.
+
+    Mirrors the firmware's ``_provision_form``: the single substitution is
+    ``DEVNAME`` → the unit handle (the firmware uses
+    ``cfg.get("device_name", "pico")``; the mock's handle is its equivalent),
+    exactly as ``render_unit_page`` does — no MOCK_PAGE_EDITS seam is applied
+    here. The form's own ``fetch("/provision")`` submit hits the router's
+    firmware-mode STA refusal (403), which the page renders in its error
+    slot; that faithful refusal IS the correct simulated-unit behaviour, so
+    there is nothing to label.
+    """
+    if _PROVISION_HTML is None:
+        # Defensive: provision_page_response answers 404 before ever calling
+        # here, so this only fires if a caller uses the renderer directly.
+        raise RuntimeError("provisioning form is not vendored — cannot render")
+    return _PROVISION_HTML.replace("DEVNAME", device_name)
+
+
+def provision_page_response(device_name: str) -> Response:
+    """The form as an HTTP response — ``text/html``, or the firmware-shaped 404.
+
+    Same path, content type and status as the firmware's ``GET /provision``;
+    the ``None`` vendor (file unreadable at import) answers with the
+    ``{"ok": false, "error": ...}`` JSON shape the firmware uses for its
+    missing-file edges, never FastAPI's ``{"detail": ...}``.
+    """
+    if _PROVISION_HTML is None:
+        return JSONResponse(status_code=404, content=_PROVISION_MISSING)
+    return Response(content=render_provision_page(device_name), media_type="text/html")
 
 
 def static_response(filename: str) -> Response:

@@ -68,6 +68,20 @@ def _ap_view_only() -> JSONResponse:
     return JSONResponse(status_code=403, content=_AP_VIEW_ONLY_ERROR)
 
 
+# The POST /provision STA-refusal body. Copied verbatim from the firmware's
+# `_provision` mode guard (app/api.py): a connected (not-"ap") unit is rejected
+# with this 403 BEFORE any body parsing, config mutation, save, or reboot. The
+# mock always presents as a STA unit (`UnitState.mode` is always "sta" — there
+# is no AP entry point), so this is not a guarded branch here but the route's
+# invariant response: mirror the firmware's body exactly, never a mock-specific
+# message. A real AP success path (write wifi creds, reboot) is deliberately
+# absent — the mock has no AP path to reach it from.
+_AP_ONLY_PROVISION_ERROR = {
+    "ok": False,
+    "error": "provisioning is only available in AP mode",
+}
+
+
 
 # ── Request body DTOs ─────────────────────────────────────────────────────
 # NestJS equivalent: DTO classes with class-validator decorators.
@@ -288,6 +302,46 @@ async def get_static(filename: str) -> Response:
     paths — they are page surface only.
     """
     return unit_page.static_response(filename)
+
+
+# ── Provisioning endpoints ───────────────────────────────────────────────
+
+
+@router.get("/provision", response_model=None)
+async def get_provision(request: Request) -> Response:
+    """The Wi-Fi credential setup form — always ``text/html``.
+
+    Mirrors the firmware's ``GET /provision``, served in BOTH operating modes
+    (the unit page's offline banner links here). The vendored copy of
+    ``mushpi-grow/app/provision.html`` is served unmodified except the
+    firmware's own ``DEVNAME`` injection — no mock seam edits. The form's
+    submit hits the 403 below, exactly what a connected real unit answers, so
+    the page needs no simulated label.
+
+    NestJS mapping: a controller returning a view instead of a DTO —
+    ``response_model=None`` because the route does not answer JSON.
+    """
+    state = _get_state(request)
+    return unit_page.provision_page_response(state.handle)
+
+
+@router.post("/provision", response_model=None)
+async def post_provision() -> JSONResponse:
+    """Wi-Fi provisioning — the firmware's STA refusal: 403, no state change.
+
+    The firmware's handler checks the operating mode FIRST — before any body
+    parsing, config mutation, save, or reboot — and rejects a connected (STA)
+    unit with the exact ``{"ok": false, "error": "provisioning is only
+    available in AP mode"}`` body. The mock has no AP path, so that refusal is
+    its invariant response here, before anything else.
+
+    Deliberately NO request DTO: a Pydantic body model would fire FastAPI's
+    422 before the guard runs, while the firmware 403s every POST from a
+    connected unit regardless of body. ``JSONResponse`` (not
+    ``HTTPException``) keeps the firmware's wire shape (``HTTPException``
+    would emit ``{"detail": ...}``).
+    """
+    return JSONResponse(status_code=403, content=_AP_ONLY_PROVISION_ERROR)
 
 
 # ── Sensor endpoints ──────────────────────────────────────────────────────

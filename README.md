@@ -100,7 +100,7 @@ mushpi-mock (Python + FastAPI + uv)
 
 ## Endpoints
 
-All endpoints mirror the real Pico firmware. See [`mushpi-grow/spec/openapi.yaml`](https://github.com/mushroom-pi/mushpi-grow/blob/dev/spec/openapi.yaml) for the canonical API contract. The firmware's AP-provisioning endpoint (`POST /provision`) is not mirrored.
+All endpoints mirror the real Pico firmware. See [`mushpi-grow/spec/openapi.yaml`](https://github.com/mushroom-pi/mushpi-grow/blob/dev/spec/openapi.yaml) for the canonical API contract. The provisioning surface is mirrored too: `GET /provision` serves the firmware's Wi-Fi setup form (the same bytes a connected unit serves), and `POST /provision` answers with the firmware's connected-(STA)-unit refusal — `403` before any state change — since the mock has no AP mode.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -113,12 +113,14 @@ All endpoints mirror the real Pico firmware. See [`mushpi-grow/spec/openapi.yaml
 | GET | `/health` | System health (RAM, WiFi, uptime) |
 | GET | `/system` | Board info, MicroPython version, software version |
 | GET | `/ui` | On-unit status-and-control page (HTML). The same page a real unit serves, so the interface can be seen and exercised without hardware |
+| GET | `/provision` | Wi-Fi setup form (HTML) — the same page a real unit serves in both modes; submitting it below gets the firmware's STA refusal |
 | GET | `/static/{filename}` | Page assets for the unit page: `unit.js` and `favicon.svg`. Unknown or missing asset → `404` |
 | GET | `/ping` | Liveness check (empty `200`) |
 | POST/PUT | `/setpoints` | Update temp/humidity targets |
 | POST/PUT | `/outputs` | Set relay states |
 | POST/PUT | `/control` | Enable/disable control loop |
 | POST/PUT | `/setup` | Update GPIO configuration |
+| POST | `/provision` | Wi-Fi credentials — refused with the firmware's exact STA-mode body (`403 {"ok": false, "error": "provisioning is only available in AP mode"}`), no AP path exists here |
 | POST | `/reboot` | Mock reboot (no-op — returns 200) |
 | GET | `/version` | **Mock-only** (not in the Pico spec): `{mock_version, represented_firmware_version, represented_api_version}` |
 

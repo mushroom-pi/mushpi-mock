@@ -63,10 +63,10 @@ var devName = window.__UNIT__.name;
         }
 
         // ── load ────────────────────────────────────────────────────────────
-        // STA mode: one snapshot from GET / (explicit Accept keeps the
-        // firmware's content negotiation returning JSON). AP mode: GET / serves
-        // the provisioning form, so the page composes the same shape from the
-        // individual GET endpoints.
+        // Connected (STA): one snapshot from GET / (explicit Accept keeps the
+        // firmware's content negotiation returning JSON). Offline (AP): GET /
+        // is the Wi-Fi setup form, so the page composes the same shape from
+        // the individual GET endpoints.
         function loadSnapshot() {
             if (unitMode === "ap") {
                 var paths = ["/system", "/health", "/sensors", "/outputs", "/setpoints", "/control", "/setup"];
@@ -119,7 +119,7 @@ var devName = window.__UNIT__.name;
             setText("idBoard", hw.board || "—");
             setText("idMp", mp.build || mp.version || "—");
             setText("idFw", s.firmware_version || "—");
-            setText("idApi", s.api_version != null ? String(s.api_version) : "not reported in provisioning mode");
+            setText("idApi", s.api_version != null ? String(s.api_version) : "not reported while offline");
 
             setText("bSince", fmtDur(up.since_boot_s) + (up.reboot_reason ? "  ·  last reboot: " + up.reboot_reason : ""));
             setText("bTemp", health.mcu_temp_c != null ? health.mcu_temp_c.toFixed(1) + " °C" : "—");
@@ -137,8 +137,10 @@ var devName = window.__UNIT__.name;
             var al = $("cSensorAlert");
             if (!dht.sensor_ok) {
                 al.style.display = "block";
-                al.textContent = "Sensor faulted" + (dht.last_error ? " (" + dht.last_error + ")" : "") +
-                    ". The loop keeps running on the last good reading — treat the climate numbers as stale until this clears.";
+                al.textContent = "Sensor faulted" + (dht.last_error ? " (" + dht.last_error + ")" : "") + (
+                    unitMode === "ap"
+                        ? ". While offline the unit cuts the outputs until a good reading returns — the relays will not run on stale values."
+                        : ". The loop keeps running on the last good reading — treat the climate numbers as stale until this clears.");
             } else {
                 al.style.display = "none";
             }
@@ -159,7 +161,7 @@ var devName = window.__UNIT__.name;
             if (s.hub == null) {
                 chip("hubCfgChip", false, false);
                 chip("hubConnChip", false, false);
-                setText("hubState", "Hub state is not tracked in provisioning mode — the unit only announces itself to a hub in normal (STA) mode.");
+                setText("hubState", "Hub state is not tracked while offline — the unit announces itself to a hub only after it has joined a network.");
             } else {
                 $("hubCfgChip").textContent = s.hub.configured ? "YES" : "NO";
                 $("hubCfgChip").className = "chip " + (s.hub.configured ? "on" : "off");
@@ -182,57 +184,54 @@ var devName = window.__UNIT__.name;
         }
 
         // ── interactive state ───────────────────────────────────────────────
+        // Controls, devices and mapping are fully operable in both modes —
+        // offline the unit regulates against its held targets just like when
+        // connected.
         function updateControls() {
-            var ap = unitMode === "ap";
             var loop = $("loopChk").checked;
             var al = $("ctlAlert");
-            if (ap) {
-                al.className = "alert warn";
-                al.textContent = "Provisioning is view-only: the loop and targets cannot be changed from here. Unlock: submit the Wi-Fi setup form at / — the unit reboots into normal mode.";
-            } else if (loop) {
+            if (loop) {
                 al.className = "alert info";
                 al.textContent = "While the control loop is on, the unit will turn devices on and/or off automatically to try to meet the targets.";
             } else {
                 al.className = "alert warn";
                 al.textContent = "With the control loop off, the devices have to be turned on and/or off manually, as the unit won't automatically try to reach the targets. All relays are forced off the moment the loop is switched off.";
             }
-            $("loopChk").disabled = ap || saveBusy || !snap;
-            $("tempSl").disabled = ap || saveBusy || !snap || !loop;
-            $("humSl").disabled = ap || saveBusy || !snap || !loop;
+            $("loopChk").disabled = saveBusy || !snap;
+            $("tempSl").disabled = saveBusy || !snap || !loop;
+            $("humSl").disabled = saveBusy || !snap || !loop;
             setText("tempVal", $("tempSl").value + " °C");
             setText("humVal", $("humSl").value + " %");
             var parts = [];
-            if (snap && !ap) {
+            if (snap) {
                 if (loop !== snap.control_loop_enabled) parts.push("control loop → " + (loop ? "ON" : "OFF"));
                 var tsp = snap.setpoints || {};
                 var t = Number($("tempSl").value), h = Number($("humSl").value);
                 if (t !== tsp.temperature) parts.push("temperature target " + tsp.temperature + " → " + t + " °C");
                 if (h !== tsp.humidity) parts.push("humidity target " + tsp.humidity + " → " + h + " %");
             }
-            setText("ctlSum", ap ? "Locked while provisioning." : (parts.length ? "Will send: " + parts.join("; ") + "." : "No changes to send."));
-            $("ctlSave").disabled = ap || saveBusy || !snap || !dirty.controls;
+            setText("ctlSum", parts.length ? "Will send: " + parts.join("; ") + "." : "No changes to send.");
+            $("ctlSave").disabled = saveBusy || !snap || !dirty.controls;
         }
 
         function updateDevices() {
-            var ap = unitMode === "ap";
             var loopOn = !!(snap && snap.control_loop_enabled);
             var al = $("devAlert");
             al.className = loopOn ? "alert warn" : "alert info";
             al.textContent = loopOn
                 ? "While the control loop is on, the devices cannot be turned on and/or off manually, since the unit controls them."
                 : "With the control loop disabled, the devices can be turned on and/or off manually.";
-            DEV_ROLES.forEach(function (k) { $("dev-" + k).disabled = ap || loopOn || saveBusy || !snap; });
-            setText("devWhy", ap ? "Locked while provisioning — unlock by submitting the Wi-Fi setup form at /." :
-                (loopOn ? "Locked: the control loop is driving the devices. Turn the loop OFF in the Controls card (and Apply it) to unlock hand-switching here." : ""));
+            DEV_ROLES.forEach(function (k) { $("dev-" + k).disabled = loopOn || saveBusy || !snap; });
+            setText("devWhy", loopOn ? "Locked: the control loop is driving the devices. Turn the loop OFF in the Controls card (and Apply it) to unlock hand-switching here." : "");
             var parts = [];
             var outs = (snap && snap.outputs) || {};
-            if (snap && !ap) {
+            if (snap) {
                 DEV_ROLES.forEach(function (k) {
                     if ($("dev-" + k).checked !== !!outs[k]) parts.push(k + " → " + ($("dev-" + k).checked ? "ON" : "OFF"));
                 });
             }
-            setText("devSum", ap ? "Locked while provisioning." : (parts.length ? "Will send: " + parts.join(", ") + "." : "No changes to send."));
-            $("devSave").disabled = ap || loopOn || saveBusy || !snap || !dirty.devices || parts.length === 0;
+            setText("devSum", parts.length ? "Will send: " + parts.join(", ") + "." : "No changes to send.");
+            $("devSave").disabled = loopOn || saveBusy || !snap || !dirty.devices || parts.length === 0;
         }
 
         function mapErrors() {
@@ -258,12 +257,10 @@ var devName = window.__UNIT__.name;
         }
 
         function updateMapping() {
-            var ap = unitMode === "ap";
             var ack = $("mapAck").checked;
-            $("mapAck").disabled = ap || saveBusy || !snap;
-            ROLES.forEach(function (r) { $("pin-" + r).disabled = ap || !ack || saveBusy || !snap; });
-            setText("mapWhy", ap ? "Locked while provisioning — unlock by submitting the Wi-Fi setup form at /." :
-                (!ack ? "Tick the wiring check above to unlock the fields." : "Fields unlocked — changes are previewed below and only sent on Save."));
+            $("mapAck").disabled = saveBusy || !snap;
+            ROLES.forEach(function (r) { $("pin-" + r).disabled = !ack || saveBusy || !snap; });
+            setText("mapWhy", !ack ? "Tick the wiring check above to unlock the fields." : "Fields unlocked — changes are previewed below and only sent on Save.");
 
             var errs = mapErrors();
             var pins = (snap && snap.devices && snap.devices.pins) || {};
@@ -280,16 +277,16 @@ var devName = window.__UNIT__.name;
                 if (cur !== "—" && prop !== "—" && prop !== cur && !errs[r]) changed.push(r + " " + cur + " → " + prop);
             });
             var okAll = Object.keys(errs).length === 0;
-            setText("mapSum", ap ? "Locked while provisioning." :
-                (changed.length ? "Will send: " + changed.join(", ") + ". The unit re-checks duplicates and reserved pins and refuses with a reason." :
-                    (okAll ? "No changes to send." : "Fix the highlighted fields first.")));
-            $("mapSave").disabled = ap || saveBusy || !snap || !ack || !dirty.mapping || !okAll || changed.length === 0;
+            setText("mapSum", changed.length ? "Will send: " + changed.join(", ") + ". The unit re-checks duplicates and reserved pins and refuses with a reason." :
+                (okAll ? "No changes to send." : "Fix the highlighted fields first."));
+            $("mapSave").disabled = saveBusy || !snap || !ack || !dirty.mapping || !okAll || changed.length === 0;
         }
 
         function updateReboot() {
-            var ap = unitMode === "ap";
-            $("rebootSoft").disabled = ap || saveBusy;
-            $("rebootHard").disabled = ap || saveBusy;
+            // Reboot works in both modes — offline it is how the grower retries
+            // the join when the router comes back.
+            $("rebootSoft").disabled = saveBusy;
+            $("rebootHard").disabled = saveBusy;
         }
 
         function updateAll() { updateControls(); updateDevices(); updateMapping(); updateReboot(); }
@@ -417,7 +414,6 @@ var devName = window.__UNIT__.name;
 
         wire();
         $("apBanner").style.display = unitMode === "ap" ? "block" : "none";
-        if (unitMode === "ap") $("card-reboot").style.display = "none";
         setText("devname", devName);
         updateAll();
         refresh(true);

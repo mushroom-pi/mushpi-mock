@@ -357,20 +357,25 @@
             <div class="msg e" id="fetchMsg"></div>
         </div>
 
-        <!-- ── AP-mode banner ── -->
+        <!-- ── offline banner ── -->
         <div class="card banner" id="apBanner" style="display:none">
-            <h2>Provisioning mode — view-only</h2>
+            <h2>Running offline — by design</h2>
             <div class="why" style="font-size:13px">
-                This unit is waiting for Wi-Fi credentials. While it waits:
+                This unit has <b>no network</b> and is <b>regulating against its targets anyway</b>: the control
+                loop keeps running on the unit's own access point, no hub required. While offline:
                 <ul style="margin:6px 0 6px 18px">
-                    <li>The relays are <b>OFF</b> and stay off — the control loop is not running.</li>
-                    <li>Every control on this page is locked: the unit refuses changes (HTTP 403) until it has joined a
-                        network.</li>
+                    <li>This page stays fully operable — targets, the loop switch and the hand-set devices all
+                        work and are saved on the unit.</li>
+                    <li>If the sensor goes faulty, the outputs are cut until a good reading returns — the unit
+                        will not drive the relays from stale values.</li>
+                    <li><b>Pin remapping</b> works here too — before anything is written, the unit re-checks
+                        the full merged mapping against the same reserved-pin and duplicate-GPIO rules it
+                        enforces when connected.</li>
                 </ul>
-                <b>How to leave:</b> open the <a href="/">Wi-Fi setup form</a> (the unit's root address), enter your
-                network
-                credentials and submit. The unit saves them, reboots, and joins the network — this page then unlocks.
-                If GP0 was held LOW at boot to force provisioning: free GP0 and power-cycle the unit instead.
+                <b>To join a network:</b> open the <a href="/provision"><b>Wi-Fi setup form</b></a>
+                (<code>/provision</code> on this unit) — enter your network credentials and submit. The unit saves
+                them, reboots and joins the network; this page then shows the connected view. If GP0 was held LOW at
+                boot to force provisioning: free GP0 and power-cycle the unit instead.
             </div>
         </div>
 
@@ -433,10 +438,11 @@
             <div class="row"><span class="k">Sensor health</span><span class="chip on" id="cSensorChip">OK</span></div>
             <div class="why">The DHT11 reading the unit reports as its latest measurement.</div>
             <div class="alert warn" id="cSensorAlert" style="display:none"></div>
-            <div class="why"><b>Note:</b> if the sensor ever fails, the control loop keeps running on the last good
-                reading
-                — it does not stop regulating, and it cannot tell a faulted sensor from a working one. Watch this card
-                after a failure: the numbers below may be stale.</div>
+            <div class="why"><b>Note:</b> if the sensor ever fails while connected, the control loop keeps
+                running on the last good reading — it does not stop regulating, and it cannot tell a faulted
+                sensor from a working one. <b>While offline</b> there is no hub watching the readings, so the
+                unit instead cuts the outputs until a good reading returns. Watch this card after a failure:
+                the numbers below may be stale.</div>
         </div>
 
         <!-- ── controls ── -->

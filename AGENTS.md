@@ -10,7 +10,7 @@ These conventions are read by the `mushpi-mock` agent. The agent is a **single a
 
 ## Canonical References
 
-1. **Pico API contract**: `mushpi-grow/spec/openapi.yaml` — the mock must mirror every endpoint, request/response shape, and behavior defined here. The announce payload is documented in `components.schemas.AnnouncePayload` (it targets the *server's* URL, so it is deliberately not under `paths:`). The unit page and its assets are mirrored the same way — vendored byte-identically under `src/mushpi_mock/static/`, with the mock-only differences applied at render time in `unit_page.py`, never in the vendored bytes.
+1. **Pico API contract**: `mushpi-grow/spec/openapi.yaml` — the mock must mirror every endpoint, request/response shape, and behavior defined here. The announce payload is documented in `components.schemas.AnnouncePayload` (it targets the *server's* URL, so it is deliberately not under `paths:`). The unit page, its assets, and the Wi-Fi provisioning form are mirrored the same way — vendored byte-identically under `src/mushpi_mock/static/`, with the mock-only differences applied at render time in `unit_page.py`, never in the vendored bytes (the provisioning form carries no seam — it is served as-vendored).
 2. **Firmware version**: `mushpi-grow/app/state.py` → `_SOFTWARE_VERSION`, and **API contract version**: `_API_VERSION` — the mock's represented versions must always match. See Version Alignment below.
 3. **Feature design**: issue **#1** in `mushroom-pi/mushpi-mock` — "Mock Pico Units", the migrated form of roadmap #18. The old `mushpi-docs/roadmap/features/18-mock-pico-units.md` was deleted once migrated; the issue body is now the spec, and its dated comment is the completion record.
 
@@ -140,4 +140,4 @@ There is **no** pytest/ruff/mypy test suite, linter, or type checker configured 
 The two real checks, run from `mushpi-mock/`:
 
 1. **Version alignment** — run `./scripts/check-version-alignment.sh` (firmware three-way check: grow `_SOFTWARE_VERSION` vs `src/mushpi_mock/VERSION` and `src/mushpi_mock/state.py`; plus API two-way check: grow `_API_VERSION` vs `src/mushpi_mock/state.py`). Exit 0 = all aligned.
-2. **API smoke test** — start the mock and exercise the endpoints it serves (`GET /sensors`, `PUT /setpoints`, `GET /`, `GET /ui`, `GET /static/unit.js`), per `README.md` § Verification. This is the functional gate for any API change.
+2. **API smoke test** — start the mock and exercise the endpoints it serves (`GET /sensors`, `PUT /setpoints`, `GET /`, `GET /ui`, `GET /provision`, `GET /static/unit.js`), per `README.md` § Verification. This is the functional gate for any API change.

@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+    <title>Mushroom Pi · Wi-Fi Setup</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(180deg, #0f1720, #071013 80%);
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+            color: #E6F0EA;
+        }
+
+        .card {
+            width: 100%;
+            max-width: 400px;
+            background: #0f1b12;
+            border-radius: 12px;
+            padding: 28px 24px;
+            box-shadow: 0 8px 24px rgba(2, 6, 2, .45);
+        }
+
+        .logo {
+            font-size: 18px;
+            font-weight: 700;
+            color: #C66F2F;
+            margin-bottom: 4px;
+        }
+
+        .sub {
+            color: #9AA6A0;
+            font-size: 14px;
+            margin-bottom: 18px;
+        }
+
+        .info {
+            background: rgba(124, 211, 252, .08);
+            border-left: 3px solid #7DD3FC;
+            border-radius: 6px;
+            padding: 10px 12px;
+            font-size: 13px;
+            margin-bottom: 18px;
+        }
+
+        .dev {
+            font-family: monospace;
+            font-size: 12px;
+            color: #9AA6A0;
+            margin-bottom: 14px;
+        }
+
+        .uip {
+            border: 1px solid #C66F2F;
+            border-radius: 10px;
+            padding: 12px 14px;
+            margin-bottom: 6px;
+            font-size: 13px;
+            color: #9AA6A0;
+        }
+
+        .uip a {
+            display: block;
+            color: #7DD3FC;
+            font-weight: 700;
+            font-size: 15px;
+            margin-bottom: 4px;
+        }
+
+        label {
+            display: block;
+            font-size: 13px;
+            color: #9AA6A0;
+            margin-bottom: 4px;
+            margin-top: 12px;
+        }
+
+        input {
+            width: 100%;
+            background: #0f1b12;
+            border: 1px solid rgba(255, 255, 255, .08);
+            border-radius: 8px;
+            padding: 10px 12px;
+            color: #E6F0EA;
+            font-size: 14px;
+            outline: none;
+        }
+
+        input:focus {
+            border-color: #C66F2F;
+        }
+
+        button {
+            width: 100%;
+            margin-top: 20px;
+            background: #C66F2F;
+            color: #0f1720;
+            font-weight: 700;
+            font-size: 15px;
+            border: none;
+            border-radius: 10px;
+            padding: 12px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            opacity: .9;
+        }
+
+        button:disabled {
+            opacity: .5;
+            cursor: default;
+        }
+
+        #status {
+            margin-top: 14px;
+            font-size: 13px;
+            display: none;
+        }
+
+        .err {
+            color: #e5484d;
+            font-size: 14px;
+        }
+
+        .foot {
+            text-align: center;
+            color: #9AA6A0;
+            font-size: 11px;
+            margin-top: 18px;
+        }
+
+        /* ── success view ── */
+        .sv {
+            text-align: center;
+        }
+
+        .si {
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            background: #3C8D5A;
+            color: #0f1720;
+            font-size: 30px;
+            line-height: 56px;
+            margin: 0 auto 14px;
+            font-weight: 700;
+        }
+
+        .st {
+            font-size: 20px;
+            font-weight: 700;
+            color: #3C8D5A;
+            margin-bottom: 8px;
+        }
+
+        .ss {
+            color: #9AA6A0;
+            font-size: 14px;
+            margin-bottom: 16px;
+        }
+
+        .lg {
+            text-align: left;
+            margin: 0 auto;
+        }
+
+        .lr {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+            font-size: 13px;
+        }
+
+        .ld {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .ld.o {
+            background: #4a5568;
+        }
+
+        .ld.p {
+            background: #C66F2F;
+        }
+
+        .ld.s {
+            background: #A27B35;
+        }
+
+        .ld.h {
+            background: #3C8D5A;
+        }
+
+        .sf {
+            color: #9AA6A0;
+            font-size: 12px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="card">
+        <div class="logo">🍄 Mushroom Pi</div>
+        <div class="sub" id="sub">Wi-Fi Setup</div>
+        <div class="info" id="info">Enter credentials.</div>
+        <div class="dev" id="dev"></div>
+
+        <div class="uip">
+            <a href="/">Open the unit's status &amp; control page →</a>
+            Works offline: read the climate, change the targets, toggle the loop and the devices — even while
+            this unit has no network.
+        </div>
+
+        <form id="f">
+            <label for="s">SSID</label>
+            <input id="s" type="text" required>
+            <label for="p">Password</label>
+            <input id="p" type="password" autocomplete="off">
+            <button type="submit">Connect</button>
+        </form>
+
+        <div id="status"></div>
+
+        <div class="sv" id="sv" style="display:none">
+            <div class="si">&#10003;</div>
+            <div class="st">Submitted</div>
+            <div class="ss">Restarting...</div>
+            <div class="lg">
+                <div class="lr"><span class="ld o"></span><span>OFF - Booting</span></div>
+                <div class="lr"><span class="ld p"></span><span>Double-blink - Working, no network (wrong password lands here - the unit keeps regulating)</span></div>
+                <div class="lr"><span class="ld s"></span><span>Solid - Wi-Fi connected, hub announcement pending</span></div>
+                <div class="lr"><span class="ld h"></span><span>Heartbeat - Acknowledged by the hub</span></div>
+            </div>
+            <div class="sf">Double-blinking? It did not join your network - reconnect to its AP &amp; retry.</div>
+        </div>
+
+        <div class="foot">Mushroom Pi Provisioning · 192.168.4.1:5000</div>
+    </div>
+
+    <script>
+        document.getElementById("dev").textContent = "Device: DEVNAME";
+        document.getElementById("f").addEventListener("submit", function (e) {
+            e.preventDefault();
+            var s = document.getElementById("status");
+            s.style.display = "none";
+            fetch("/provision", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    wifi: {
+                        ssid: document.getElementById("s").value,
+                        password: document.getElementById("p").value,
+                    },
+                }),
+            })
+                .then(function (r) { return r.json(); })
+                .then(function (d) {
+                    if (d.ok) {
+                        ["sub", "info", "dev", "f"].forEach(function (i) {
+                            document.getElementById(i).style.display = "none";
+                        });
+                        document.getElementById("sv").style.display = "block";
+                    } else {
+                        s.className = "err";
+                        s.textContent = "\u00d7 " + (d.error || "Error");
+                        s.style.display = "block";
+                    }
+                })
+                .catch(function () {
+                    s.className = "err";
+                    s.textContent = "\u00d7 Request failed";
+                    s.style.display = "block";
+                });
+        });
+    </script>
+</body>
+
+</html>

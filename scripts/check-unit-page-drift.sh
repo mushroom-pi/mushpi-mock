@@ -2,10 +2,11 @@
 # check-unit-page-drift.sh — mushpi-mock ⇔ mushpi-grow unit-page drift check.
 #
 # "Checked vendored copy": the mock serves byte-identical copies of the firmware
-# page assets (unit.html, unit.js, favicon.svg). The mock-only differences
-# (simulated labels + restart caveat) live in unit_page.py at render time, NOT
-# in these bytes — so an exact hash comparison is the right staleness guard,
-# in the style of check-version-alignment.sh.
+# page assets (unit.html, unit.js, favicon.svg) plus the provisioning form
+# (provision.html). The mock-only differences (simulated labels + restart caveat,
+# unit.html only) live in unit_page.py at render time, NOT in these bytes — so an
+# exact hash comparison is the right staleness guard, in the style of
+# check-version-alignment.sh.
 #
 # For each asset it answers two questions:
 #   DRIFTED   grow's current file != the mock's vendored copy
@@ -53,10 +54,11 @@ hash_file() {
 # asset name -> grow source path (closed set)
 asset_source() {
     case $1 in
-        unit.html)   echo "app/unit.html" ;;
-        unit.js)     echo "app/static/unit.js" ;;
-        favicon.svg) echo "app/static/favicon.svg" ;;
-        *)           echo "" ;;
+        unit.html)      echo "app/unit.html" ;;
+        unit.js)        echo "app/static/unit.js" ;;
+        favicon.svg)    echo "app/static/favicon.svg" ;;
+        provision.html) echo "app/provision.html" ;;
+        *)              echo "" ;;
     esac
 }
 
