@@ -17,6 +17,7 @@ and system info.
 
 from __future__ import annotations
 
+import hashlib
 import time
 from typing import Any
 
@@ -53,6 +54,37 @@ _BOARD_IDENTITY = "Raspberry Pi Pico 2 W with RP2350 (simulated)"
 _STA_MODE = "sta"
 
 
+def _mac_for_handle(handle: str) -> str:
+    """Derive this unit's Wi-Fi MAC address from its handle.
+
+    A real Pico 2 W reports the burned-in interface address
+    (``wlan.config('mac')`` formatted as ``":".join("%02x" % b …)`` in
+    ``mushpi-grow/app/state.py``) — every board has a different one, and the
+    hub stores it per unit, so a mock that gave all its units the same address
+    both looks wrong and makes the units indistinguishable server-side.
+
+    Scheme: ``02:`` + the first five bytes of ``sha256(handle)``.
+
+    * ``02`` as the leading octet sets the locally-administered bit and clears
+      the multicast bit — a software-assigned, unicast address. It also marks
+      the value as not belonging to any physical NIC's OUI block, which is the
+      honest thing for a simulated unit to report.
+    * The remaining 5 octets come from the digest, so distinct handles yield
+      distinct addresses (40 bits — collisions across a demo roster are
+      negligible) and the same handle always yields the same address.
+
+    Determinism across restarts is the point, hence ``hashlib.sha256`` and
+    **not** Python's builtin ``hash()``: the builtin is salted per process
+    (``PYTHONHASHSEED``), so it would hand the same unit a new identity on
+    every boot and the hub would keep re-learning a fresh MAC.
+
+    NestJS analogy: a pure factory function for an entity's identity column,
+    like generating a deterministic id from a slug.
+    """
+    digest = hashlib.sha256(handle.encode("utf-8")).digest()
+    return ":".join(f"{b:02x}" for b in (b"\x02" + digest[:5]))
+
+
 class UnitState:
     """All in-memory state for one mock Pico unit.
 
@@ -63,6 +95,15 @@ class UnitState:
         - hub       → self.hub (single writer: announce.py; mutated in place)
     Plus additional state for uptime, system info, control loop, and the
     operating mode (`self.mode`) the page bootstraps in.
+
+    Identity is per unit, not per process: the Wi-Fi MAC reported in
+    `_system_info["wifi"]["mac"]` is derived from the handle (see
+    `_mac_for_handle`), so N units in one `mushpi-mock start` look like N
+    distinct boards to the hub — in the announce payload and in `GET /` alike.
+
+    Two monotonic stamps (`last_poll_monotonic`, `last_announce_ok_monotonic`)
+    feed announce.py's re-announce watchdog; they are mock-only state with no
+    firmware counterpart.
     """
 
     def __init__(
@@ -89,6 +130,9 @@ class UnitState:
         self.handle = handle
         self.port = port
         self.boot_time = time.time()
+        # Monotonic counterpart of boot_time, so elapsed-time maths (the poll
+        # gap below) never mixes clocks: boot_time is wall-clock and can jump.
+        self.boot_monotonic = time.monotonic()
 
         # ── Operating mode (firmware make_app parity) ──
         # The mock presents as a normal STA unit; no entry point selects "ap".
@@ -100,6 +144,23 @@ class UnitState:
         # Single writer: announce.py (mutated in place, never reassigned).
         self.hub: dict[str, bool] = {"configured": bool(hub_configured), "connected": False}
 
+        # ── Poll / announce bookkeeping (drives announce.py's watchdog) ──
+        # `monotonic()` throughout — these are elapsed-time comparisons, and a
+        # wall clock can jump (NTP, a laptop lid) and fake a 3-minute gap.
+        #
+        # `last_poll_monotonic`: when a `GET /` snapshot was last served, i.e.
+        # the last time anybody asked the unit for its full state. Sole writer:
+        # `mark_polled()`, called from the router's `GET /` handler.
+        # `None` = never polled since this process started.
+        self.last_poll_monotonic: float | None = None
+
+        # `last_announce_ok_monotonic`: when the hub last acknowledged an
+        # announce from this unit. Sole writer: announce.py, alongside its
+        # existing single-writer claim on `hub["connected"]`. The watchdog needs
+        # a latch that survives a later failed attempt — `hub["connected"]` is
+        # cleared by every failure, so it cannot answer "has this unit ever
+        # registered?". `None` = never announced successfully.
+        self.last_announce_ok_monotonic: float | None = None
 
         # ── Sensors (mirrors firmware's status["temperature"], status["humidity"]) ──
         self._sensors: dict[str, Any] = {
@@ -173,7 +234,11 @@ class UnitState:
                 "cpu": {"freq_mhz": 133},
             },
             "wifi": {
-                "mac": "de:ad:be:ef:00:01",
+                # Unique per unit, stable across restarts (see _mac_for_handle):
+                # the announce payload and `GET /`/`GET /system` all read THIS
+                # one field, so the identity the hub stores and the identity it
+                # polls back can never disagree.
+                "mac": _mac_for_handle(handle),
                 # Mirrors the `ip` sent on announce (see announce.py).
                 # Defaults to 127.0.0.1 when no announce_ip is configured.
                 "ip": announce_ip or "127.0.0.1",
@@ -183,6 +248,36 @@ class UnitState:
         }
 
     # ── Uptime ────────────────────────────────────────────────────────────
+
+    def mark_polled(self) -> None:
+        """Record that a full-snapshot `GET /` was just served (the poll beat).
+
+        The server's cron reads `GET /?force=1` every 60 s; that request is the
+        only proof the hub still knows this unit exists. announce.py's watchdog
+        compares this stamp against its idle window, so the mark belongs on the
+        snapshot route alone — never on the control endpoints, where a grower
+        driving relays by hand would look like a healthy hub poll.
+
+        Mock-only: the firmware tracks no poll history (the hub's poll is just
+        an inbound request Microdot answers), and the real device re-announces
+        only on boot. See announce.py § Poll-aware re-announce watchdog.
+        """
+        self.last_poll_monotonic = time.monotonic()
+
+    def poll_gap_s(self) -> float:
+        """Seconds since the last full-snapshot poll, or since boot-announce.
+
+        Used for the watchdog's log line. When this process has never been
+        polled, the reference is the last acknowledged announce — the unit is
+        dark from the hub's point of view either way, so the longer that has
+        gone on, the more reason the watchdog has to speak up.
+        """
+        reference = self.last_poll_monotonic
+        if reference is None:
+            reference = self.last_announce_ok_monotonic
+        if reference is None:
+            reference = self.boot_monotonic
+        return max(0.0, time.monotonic() - reference)
 
     def get_uptime_info(self) -> dict[str, Any]:
         """Return uptime dict matching the firmware's uptime.get_uptime_info().

@@ -28,11 +28,12 @@ uv run mushpi-mock start --config config.example.json
 ## How It Works
 
 1. **Start**: The CLI spawns one or more uvicorn servers, each on its own port.
-2. **Announce**: Each unit `POST`s to `http://localhost:3000/v1/pico-units/announce` (configured in `config.json`). Retries with exponential backoff if the server isn't ready. Returns the `pico_unit_id` assigned by the server.
-3. **Simulate**: A hysteresis control loop (3-zone humidity, 2-zone temperature) produces a characteristic sawtooth oscillation around setpoints — matching the real Pico firmware's behavior. Humidifier ON drives humidity up, fan ON drives it down, heater ON drives temperature up.
-4. **Seed** (optional): `--seed-days N` bulk-inserts N days of backdated readings into the server's SQLite database via Python's `sqlite3` stdlib. All 17 columns populated — temperature, humidity, relay states, setpoints, board metrics, response time. Requires `db_path` in `config.json` and a successful announce.
-5. **Serve**: The FastAPI app exposes all Pico endpoints — `GET /`, `/sensors`, `/setpoints`, `/outputs`, `/control`, `/setup`, `/health`, `/system`, plus `POST`/`PUT` mutations — and one mock-only endpoint, `GET /version`, which separates the mock's own tool version from the firmware/API versions it represents.
-6. **Poll**: The server polls `GET /` every 60 seconds (same as with real Pico units) and stores readings in SQLite.
+2. **Announce**: Each unit `POST`s to `http://localhost:3000/v1/pico-units/announce` (configured in `config.json`). Retries with exponential backoff if the server isn't ready. Returns the `pico_unit_id` assigned by the server. The identity it reports is **per unit, not per process**: each unit's MAC is derived from its handle (`02:` + the first five bytes of `sha256(handle)` — a locally-administered, unicast address that is unique per unit and stable across restarts), so N units sharing one process look like N distinct boards. The same value is what `GET /` and `GET /system` serve under `wifi.mac`, so the hub's announce-time identity and its poll-time identity can never disagree.
+3. **Re-announce**: A unit that announced but then stops being polled re-announces itself, so a lost address on the hub side is recoverable (a real Pico announces at boot only). If no `GET /` has arrived for **3 minutes** (three poll intervals) the unit re-announces with the same backoff, and never more than **once per 5 minutes** while it stays dark. A unit that *is* being polled never re-announces: the hub re-applies the active batch's setpoints on every announce, so re-announcing a healthy unit would fight the grower's manual overrides.
+4. **Simulate**: A hysteresis control loop (3-zone humidity, 2-zone temperature) produces a characteristic sawtooth oscillation around setpoints — matching the real Pico firmware's behavior. Humidifier ON drives humidity up, fan ON drives it down, heater ON drives temperature up.
+5. **Seed** (optional): `--seed-days N` bulk-inserts N days of backdated readings into the server's SQLite database via Python's `sqlite3` stdlib. All 17 columns populated — temperature, humidity, relay states, setpoints, board metrics, response time. Requires `db_path` in `config.json` and a successful announce.
+6. **Serve**: The FastAPI app exposes all Pico endpoints — `GET /`, `/sensors`, `/setpoints`, `/outputs`, `/control`, `/setup`, `/health`, `/system`, plus `POST`/`PUT` mutations — and one mock-only endpoint, `GET /version`, which separates the mock's own tool version from the firmware/API versions it represents.
+7. **Poll**: The server polls `GET /` every 60 seconds (same as with real Pico units) and stores readings in SQLite. Every such poll also resets the unit's re-announce timer (step 3).
 
 ## Runtime State — Survives a Stop/Start
 
@@ -94,7 +95,7 @@ mushpi-mock (Python + FastAPI + uv)
     ├── pins.py           Reserved-GPIO rules mirrored from grow
     ├── simulation.py     Hysteresis control loop (like a @Cron() service)
     ├── seed.py           Direct SQLite bulk seeding for --seed-days
-    ├── announce.py       Server announce on startup (like a bootstrap hook)
+    ├── announce.py       Server announce + poll-aware re-announce watchdog (like a bootstrap hook + @Interval)
     └── static/           Byte-identical vendored page assets + VENDOR manifest
 ```
 

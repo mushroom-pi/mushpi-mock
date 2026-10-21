@@ -750,6 +750,8 @@ async def get_all(request: Request, force: str | None = None) -> dict[str, Any] 
 
     `?force=1` applies to the JSON snapshot only (it drives the simulation
     tick for a fresh reading); it is irrelevant to serving the static page.
+    Serving the JSON snapshot also stamps the unit as polled, which is what
+    suppresses announce.py's re-announce watchdog (see the note below).
 
     NestJS analogy: one route, two representations — like a controller method
     returning either a serialized DTO or a rendered view based on `@Accepts()`.
@@ -764,5 +766,17 @@ async def get_all(request: Request, force: str | None = None) -> dict[str, Any] 
 
     if force:
         await _get_engine(request).tick()
+
+    # Poll bookkeeping — the JSON snapshot IS the hub's liveness signal
+    # (`GET /?force=1`, every 60 s), so serving it resets the re-announce
+    # watchdog's idle clock. Deliberately broad: any JSON snapshot read counts,
+    # including the unit page's own 30 s `Accept: application/json` refresh —
+    # that errs toward NEVER re-announcing a unit somebody is watching, which is
+    # the safe direction (a re-announce makes the hub re-apply setpoints). The
+    # narrower alternative — mark only `?force=1`, the cron's exact signature —
+    # would re-announce a healthy unit the moment the server dropped the query
+    # flag, and the HTML page branch above never marks, because a human opening
+    # the page is not the hub polling.
+    state.mark_polled()
     return state.get_full_snapshot()
 

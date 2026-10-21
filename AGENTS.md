@@ -35,14 +35,14 @@ mushpi-mock/
     ├── VERSION            # REPRESENTED firmware version (must match grow; NOT the mock's own version)
     ├── main.py            # FastAPI app factory + click CLI
     ├── config.py          # Pydantic config models
-    ├── state.py           # In-memory unit state (`_SOFTWARE_VERSION` + `_API_VERSION` = represented versions)
+    ├── state.py           # In-memory state (`_SOFTWARE_VERSION` + `_API_VERSION` = represented versions); per-handle MAC (`_mac_for_handle`), poll/announce stamps
     ├── runtime_state.py   # Per-handle runtime state file (setpoints, loop flag, hand-set fan/humidifier) — survives a stop/start; mirrors the device's runtime.json
     ├── router.py          # All Pico API endpoints + mock-only `GET /version`
     ├── unit_page.py       # Vendored page loader + mock-only render seam
     ├── pins.py            # Reserved-GPIO rules mirrored from grow
     ├── simulation.py      # Hysteresis control-loop sensor data generator
     ├── seed.py            # Direct SQLite bulk seeding for --seed-days
-    ├── announce.py        # Server announce + retry logic; sole writer of `hub.connected`
+    ├── announce.py        # Server announce + retry; sole writer of `hub.connected` + the announce latch; poll-aware re-announce watchdog
     └── static/            # Byte-identical vendored page assets + VENDOR manifest
 ```
 

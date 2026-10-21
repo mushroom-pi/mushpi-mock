@@ -25,6 +25,8 @@ Startup sequence:
     2. HTTP server starts immediately (accepts requests right away)
     3. Background task: announce → seed → start simulation
     4. Simulation begins producing hysteresis-driven sensor data
+    5. Re-announce watchdog arms (announce.py): re-registers the unit if the
+       hub stops polling it — mock-only, never fires while polls keep arriving
 """
 
 from __future__ import annotations
@@ -40,7 +42,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .announce import announce_with_retry
+from .announce import announce_watchdog, announce_with_retry
 from .config import MockConfig, UnitConfig, load_config
 from .router import router
 from .runtime_state import RuntimeStateStore
@@ -112,15 +114,23 @@ def create_app(
         Sequence:
             1. Server starts accepting requests (yield)
             2. Background task: announce → seed → start simulation
+            3. Then, and only then, the re-announce watchdog arms
         """
+        # Set by _init_and_start once the boot announce has settled; the
+        # shutdown arm cancels it. `nonlocal` is the closure equivalent of a
+        # `let` in the enclosing scope that an inner function assigns to.
+        watchdog_task: asyncio.Task[None] | None = None
+
         # ── Background init: announce → seed → start simulation ───────
         async def _init_and_start() -> None:
-            """Announce, seed, then start simulation in the background.
+            """Announce, seed, start simulation, then arm the watchdog.
 
             The server is already accepting requests — this task runs
             concurrently. Sensors show initial values until the simulation
             kicks in (which is fine for demos).
             """
+            nonlocal watchdog_task
+
             # 1. Announce (blocking within this task — retries with backoff)
             ok, unit_id = await announce_with_retry(
                 state, server_url, hub_secret, announce_ip
@@ -160,6 +170,16 @@ def create_app(
                 f"(tick every {simulation.tick_interval}s)"
             )
 
+            # 4. Arm the re-announce watchdog — LAST on purpose. Creating it here
+            # means it can never run concurrently with the boot announce ladder
+            # above, and it starts from a known announce/poll baseline. If the boot
+            # announce failed outright the task still arms, but its latch gate
+            # (never acked) keeps it silent — registering the unit is the boot
+            # ladder's job, not the watchdog's.
+            watchdog_task = asyncio.create_task(
+                announce_watchdog(state, server_url, hub_secret, announce_ip)
+            )
+
         init_task = asyncio.create_task(_init_and_start())
 
         yield
@@ -167,6 +187,10 @@ def create_app(
         # ── Shutdown ──────────────────────────────────────────────────
         simulation.stop()
         init_task.cancel()
+        if watchdog_task is not None:
+            # Cancelling is safe whether the task is sleeping, mid-ladder, or
+            # already retired: announce_watchdog lets CancelledError propagate.
+            watchdog_task.cancel()
         print(f"  [{unit_config.handle}] Simulation stopped")
 
     app = FastAPI(
