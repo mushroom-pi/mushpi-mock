@@ -45,7 +45,7 @@ If the mock's hysteresis simulation is ever rewritten to match a newer firmware 
 
 - **`GET /` response shape** must match the real Pico's 11-key snapshot, in this order: `system`, `firmware_version`, `api_version`, `health`, `uptime`, `devices`, `sensors`, `outputs`, `setpoints`, `control_loop_enabled`, `hub`. `firmware_version` is the represented `_SOFTWARE_VERSION` string (mirrors `system.software.version`); `api_version` is the represented `_API_VERSION` integer; `hub` is the additive ack object and is always **last** (see the `hub` rule below). Do **not** include internal keys like `control` (config dict) in the full snapshot — those belong only on their dedicated endpoints.
 - **Announce payload shape** must match `spec/openapi.yaml` → `components.schemas.AnnouncePayload` exactly — 11 keys, in the firmware's order: `handle`, `ip`, `mac`, `port`, `micropython_version`, `firmware_version`, `api_version`, `board`, `board_total_mem_byte`, `board_total_fs_byte`, `board_cpu_freq_mhz`. The former `software_version` key is **gone**; the server's `ValidationPipe` has `forbidNonWhitelisted`, so sending it now fails the announce with 422.
-- **`GET /version` is mock-only** — the firmware does not serve it; never add it to `spec/openapi.yaml` or the mirrored surface. It exists to keep the mock's dual version identities (own `mock_version` vs `represented_firmware_version`/`represented_api_version`) distinguishable (normative rules: `mushpi-ops/MAINTAINING.md` §Version & Release Semantics).
+- **`GET /version` is mock-only** — the firmware does not serve it; never add it to `spec/openapi.yaml` or the mirrored surface. It exists to keep the mock's dual version identities (own `mock_version` vs `represented_firmware_version`/`represented_api_version`) distinguishable (normative rules: `mushpi-hub/MAINTAINING.md` §Version & Release Semantics).
 - **`GET /control` response** must return only `{"enabled": bool}` — the real Pico does not expose config fields (`period_s`, `hyst_temp`, etc.) through this endpoint.
 - **`POST /control`** must require the `enabled` key (not optional) and only accept `enabled` in the request body — the real Pico reads `period_s`/`hyst_*` from `config.json`, not from this endpoint.
 - **Firmware-matching error bodies require `JSONResponse`, not `HTTPException`** — `HTTPException` emits `{"detail": ...}` while the firmware's POST handlers emit `{"ok": false, "error": ...}`; returning `JSONResponse(status_code=..., content={"ok": False, "error": ...})` preserves mock/device parity for the same endpoint (e.g. the `POST`/`PUT /setup` GPIO-conflict 400 in `update_setup`).
@@ -112,17 +112,17 @@ The project owner knows TypeScript + NestJS deeply but is learning Python. All c
 - Comments on non-obvious lines with TypeScript parallels when helpful
 - A summary at the end of each build session covering what was done and key Python concepts used
 
-## Packaging & the ops image contract
+## Packaging & the mock image contract
 
-**This repo carries no packaging.** The demo mock image is built and published from `mushpi-ops`, which materializes `mushpi-mock/` as a **build input** — exactly as the hub image consumes `mushpi-server/` and `mushpi-client/`. There is deliberately no `Dockerfile`, no `.github/workflows/`, and no CI here. Before adding any of them, check `mushpi-ops/REFERENCE.md` § Demo stack & the mock image: the image already exists and this is the wrong place for it.
+**This repo carries no packaging.** The demo mock image is built by the private `mushpi-demo` repo (`Dockerfile.mock`), which materializes `mushpi-mock/` as a **build input** — exactly as the hub image consumes `mushpi-server/` and `mushpi-client/`. The release repo (`mushpi-hub`) builds only the hub image and carries no demo stack. There is deliberately no `Dockerfile`, no `.github/workflows/`, and no CI here. Before adding any of them, check `mushpi-demo` — the mock image already has an owner and this is the wrong place for it.
 
-Two facts in `pyproject.toml` are a **consumed interface**, because `mushpi-ops/Dockerfile.mock` builds against them. Both are build-guarded, so a mistake fails CI rather than a running demo:
+Two facts in `pyproject.toml` are a **consumed interface**, because `mushpi-demo/Dockerfile.mock` builds against them. Both are build-guarded, so a mistake fails the demo build rather than a running unit:
 
 | Fact | Guard | What breaks if you change it |
 |---|---|---|
-| `[project.scripts] mushpi-mock = "mushpi_mock.main:cli"` | `RUN mushpi-mock --help` runs during the image build | Renaming the script — or breaking the import chain behind it — **fails the ops build** (exit 127 / import error). It does not silently ship. |
-| `requires-python` | `uv sync --frozen` under `UV_PYTHON_PREFERENCE=only-system` | Raising the floor fails the ops build at install time, because the image's fixed interpreter no longer satisfies it. |
+| `[project.scripts] mushpi-mock = "mushpi_mock.main:cli"` | `RUN mushpi-mock --help` runs during the image build | Renaming the script — or breaking the import chain behind it — **fails the mock image build** (exit 127 / import error). It does not silently ship. |
+| `requires-python` | `uv sync --frozen` under `UV_PYTHON_PREFERENCE=only-system` | Raising the floor fails the build at install time, because the image's fixed interpreter no longer satisfies it. |
 
-The Python floor is only guarded while that `only-system` pin holds; without it, uv would fetch a uv-managed interpreter, the build would pass on an interpreter the base image does not ship, and the guard would vanish silently. If you need a third borrowed fact guarded, add the assertion to `mushpi-ops/Dockerfile.mock` rather than trusting it.
+The Python floor is only guarded while that `only-system` pin holds; without it, uv would fetch a uv-managed interpreter, the build would pass on an interpreter the base image does not ship, and the guard would vanish silently. If you need a third borrowed fact guarded, add the assertion to `mushpi-demo/Dockerfile.mock` rather than trusting it.
 
-Practical consequences for the mock agent: a version bump or a CLI change here may need a **corresponding ops rebuild** rather than an edit in this repo, and `mushpi-mock`'s own demo profile (five units, seeding, the drifting unit) is tracked as `mushpi-mock#3` on the project board — not in the ops stack.
+Practical consequences for the mock agent: a version bump or a CLI change here may need a **corresponding mock-image rebuild** rather than an edit in this repo, and `mushpi-mock`'s own demo profile (five units, seeding, the drifting unit) is tracked as `mushpi-mock#3` on the project board — not in the hub stack.

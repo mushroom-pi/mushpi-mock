@@ -63,7 +63,7 @@ Top-level `MockConfig` keys (`config.py`, JSON via `--config`) and `start` CLI f
 
 ## Version Alignment — MANDATORY (Dual-Versioning)
 
-The mock carries **two version identities** (normative rules: `mushpi-ops/MAINTAINING.md` §Version & Release Semantics):
+The mock carries **two version identities** (normative rules: `mushpi-hub/MAINTAINING.md` §Version & Release Semantics):
 
 | Identity | Lives in | Must match | Where it surfaces |
 |---|---|---|---|
@@ -111,7 +111,7 @@ found. Read-only.
 - **Docstrings** on every module, class, and non-trivial function
 - **NestJS analogies** in module docstrings to help the TypeScript-savvy developer
 - **Runtime persistence is router-only**: the three mutation handlers (`POST/PUT /setpoints`, `/outputs`, `/control`) are the *sole* writers of the state file via `RuntimeStateStore`; `simulation.py` must never import `runtime_state` (loop-driven switching is not grower-chosen state); restore runs once in `create_app` (the mock's boot slot). Disabling the loop turns relays off synchronously in the handler, then the engine's one-shot latch (`relays_latched`) holds them off exactly once — after that hand-set positions survive. Force handlers (`GET /?force=1`, `GET /sensors?force=1`) tick the unit's **long-lived** engine from `app.state.simulation`, never a throwaway instance — a fresh engine would re-run the one-off relay wipe on every forced read
-- **Packaging lives in `mushpi-ops`, not here — treat the CLI script name and the Python floor as a published interface.** Details: `REFERENCE.md` § Packaging & the ops image contract
+- **Packaging lives in `mushpi-demo`, not here — treat the CLI script name and the Python floor as a published interface.** That repo's `Dockerfile.mock` builds this repo's code as a build input; the release repo (`mushpi-hub`) builds only the hub image. Details: `REFERENCE.md` § Packaging & the mock image contract
 
 ## When the Agent Runs
 

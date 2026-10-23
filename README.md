@@ -129,7 +129,7 @@ All endpoints mirror the real Pico firmware. See [`mushpi-grow/spec/openapi.yaml
 
 ## Version Alignment
 
-The mock carries **two version identities** (see `mushpi-ops/MAINTAINING.md` §Version & Release Semantics — Mock dual-versioning):
+The mock carries **two version identities** (see `mushpi-hub/MAINTAINING.md` §Version & Release Semantics — Mock dual-versioning):
 
 | Identity | Where it lives | Rule |
 |---|---|---|
