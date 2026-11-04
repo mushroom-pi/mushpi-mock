@@ -55,6 +55,15 @@ class MockConfig(BaseModel):
         default=None,
         description="Path to server's SQLite DB (required for --seed-days)",
     )
+    state_path: str | None = Field(
+        default=None,
+        description=(
+            "Directory holding the per-unit runtime state files (one JSON per handle: "
+            "setpoints, loop flag, hand-set fan/humidifier). Defaults to ~/.mushpi-mock "
+            "when unset. Mirrors the device's runtime.json on flash — values survive a "
+            "mock stop/start; the heater is never stored."
+        ),
+    )
     units: list[UnitConfig] = Field(
         default_factory=lambda: [UnitConfig()],
         description="List of mock units to run",

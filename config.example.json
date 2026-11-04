@@ -3,6 +3,7 @@
   "hub_secret": "mushpi-dev-secret",
   "announce_ip": "127.0.0.1",
   "db_path": "../mushpi-server/data/app.sqlite",
+  "state_path": "~/.mushpi-mock",
   "units": [
     { "handle": "mock-tent-1", "port": 5000 },
     { "handle": "mock-tent-2", "port": 5001 },
