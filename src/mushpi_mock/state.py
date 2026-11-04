@@ -26,7 +26,7 @@ from typing import Any
 # used for automated checks between the two repos.
 # This is the *represented firmware version* — the mock's own service version
 # lives in pyproject.toml (exposed separately via GET /version).
-_SOFTWARE_VERSION = "0.8.4"
+_SOFTWARE_VERSION = "0.9.0"
 
 # Must match mushpi-grow/app/state.py::_API_VERSION (source of truth).
 # Pico↔Server REST contract generation: bumped only on a breaking contract

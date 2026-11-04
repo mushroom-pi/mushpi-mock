@@ -32,7 +32,7 @@ uv run mushpi-mock start --config config.example.json
 3. **Re-announce**: A unit that announced but then stops being polled re-announces itself, so a lost address on the hub side is recoverable (a real Pico announces at boot only). If no `GET /` has arrived for **3 minutes** (three poll intervals) the unit re-announces with the same backoff, and never more than **once per 5 minutes** while it stays dark. A unit that *is* being polled never re-announces: the hub re-applies the active batch's setpoints on every announce, so re-announcing a healthy unit would fight the grower's manual overrides.
 4. **Simulate**: A hysteresis control loop (3-zone humidity, 2-zone temperature) produces a characteristic sawtooth oscillation around setpoints — matching the real Pico firmware's behavior. Humidifier ON drives humidity up, fan ON drives it down, heater ON drives temperature up.
 5. **Seed** (optional): `--seed-days N` bulk-inserts N days of backdated readings into the server's SQLite database via Python's `sqlite3` stdlib. All 17 columns populated — temperature, humidity, relay states, setpoints, board metrics, response time. Requires `db_path` in `config.json` and a successful announce.
-6. **Serve**: The FastAPI app exposes all Pico endpoints — `GET /`, `/sensors`, `/setpoints`, `/outputs`, `/control`, `/setup`, `/health`, `/system`, plus `POST`/`PUT` mutations — and one mock-only endpoint, `GET /version`, which separates the mock's own tool version from the firmware/API versions it represents.
+6. **Serve**: The FastAPI app exposes all Pico endpoints — `GET /`, `/sensors`, `/setpoints`, `/outputs`, `/control`, `/setup`, `/health`, `/system`, plus `POST`/`PUT` mutations — and one mock-only endpoint, `GET /version`, which returns the mock's release version and the firmware/API versions it represents as separate fields.
 7. **Poll**: The server polls `GET /` every 60 seconds (same as with real Pico units) and stores readings in SQLite. Every such poll also resets the unit's re-announce timer (step 3).
 
 ## Runtime State — Survives a Stop/Start
@@ -129,18 +129,17 @@ All endpoints mirror the real Pico firmware. See [`mushpi-grow/spec/openapi.yaml
 
 ## Version Alignment
 
-The mock carries **two version identities** (see `mushpi-hub/MAINTAINING.md` §Version & Release Semantics — Mock dual-versioning):
+The mock carries **one release version, equal to the suite version** (normative rules: `mushpi-hub/MAINTAINING.md` §Version & Release Semantics, root `AGENTS.md` §Release & Branching Model). Because it impersonates firmware, its release version must equal what it represents — there is no separately-tracked tool SemVer.
 
 | Identity | Where it lives | Rule |
 |---|---|---|
-| **Represented firmware version** | `src/mushpi_mock/VERSION` + `_SOFTWARE_VERSION` in [`mushpi-grow/app/state.py`](https://github.com/mushroom-pi/mushpi-grow/blob/dev/app/state.py) (`state.py` mirror) | Must always equal grow's `_SOFTWARE_VERSION` — this is what `GET /system`, `GET /` (incl. its `firmware_version` key), and the announce payload report. |
-| **Represented API contract version** | `_API_VERSION` in `src/mushpi_mock/state.py` | Must equal grow's `_API_VERSION` — the Pico↔Server REST contract generation reported in `GET /` and the announce payload (`api_version`). Bumped only on breaking contract changes. |
-| **Mock's own service version** | `pyproject.toml` `version` (exposed via `importlib.metadata` as `mushpi_mock.__version__`) | Independent SemVer for the mock tool itself — surfaced **only** through `GET /version`, never on the mirrored Pico endpoints. |
+| **Release / represented firmware version** | `pyproject.toml` `version` (exposed as `mushpi_mock.__version__` via `importlib.metadata`), `src/mushpi_mock/VERSION`, and `_SOFTWARE_VERSION` in `src/mushpi_mock/state.py` | All three equal the suite version — and grow's `_SOFTWARE_VERSION` in [`mushpi-grow/app/state.py`](https://github.com/mushroom-pi/mushpi-grow/blob/dev/app/state.py), the single source of truth. This is what `GET /system`, `GET /` (incl. its `firmware_version` key), and the announce payload report. |
+| **Represented API contract version** | `_API_VERSION` in `src/mushpi_mock/state.py` | Must equal grow's `_API_VERSION` — the Pico↔Server REST contract generation reported in `GET /` and the announce payload (`api_version`). A contract generation, not a release number: bumped only on breaking contract changes, never on a release. |
 
-`GET /version` answers all three at once, so a demo can prove exactly which firmware the mock is emulating without confusing it with the tool's own release line:
+`GET /version` exposes three fields — `mock_version`, `represented_firmware_version`, `represented_api_version` — because they answer different questions (`mock_version` and `represented_firmware_version` now always carry the same value):
 
 ```json
-{ "mock_version": "0.2.0", "represented_firmware_version": "0.8.4", "represented_api_version": 1 }
+{ "mock_version": "0.9.0", "represented_firmware_version": "0.9.0", "represented_api_version": 1 }
 ```
 
 Verify the alignment with:
@@ -149,7 +148,7 @@ Verify the alignment with:
 ./scripts/check-version-alignment.sh
 ```
 
-It checks the firmware version three-way (grow `_SOFTWARE_VERSION` vs `VERSION` vs `state.py`) and the API version two-way (grow `_API_VERSION` vs `state.py`), printing one pass/fail line each. Exit 0 = all aligned, 1 = mismatch / extraction failure, 2 = grow checkout not found. If you manually change the firmware version, also update `src/mushpi_mock/VERSION` and the `_SOFTWARE_VERSION` constant in `state.py`; if grow's `_API_VERSION` moves, update `state.py::_API_VERSION` in the same pass.
+It checks the firmware version three-way (grow `_SOFTWARE_VERSION` vs `VERSION` vs `state.py`) and the API version two-way (grow `_API_VERSION` vs `state.py`), printing one pass/fail line each. Exit 0 = all aligned, 1 = mismatch / extraction failure, 2 = grow checkout not found. If you manually change the firmware version, update `src/mushpi_mock/VERSION`, `pyproject.toml` `version`, and the `_SOFTWARE_VERSION` constant in `state.py` (then run `uv lock`); if grow's `_API_VERSION` moves, update `state.py::_API_VERSION` in the same pass.
 
 ## Verification
 

@@ -61,28 +61,29 @@ Top-level `MockConfig` keys (`config.py`, JSON via `--config`) and `start` CLI f
 | — | `--seed-days` | `0` | Days of backdated readings to seed on startup |
 | — | `--config` / `-c` | `None` | Path to config JSON |
 
-## Version Alignment — MANDATORY (Dual-Versioning)
+## Version Alignment — MANDATORY (Single Suite Version)
 
-The mock carries **two version identities** (normative rules: `mushpi-hub/MAINTAINING.md` §Version & Release Semantics):
+The mock carries **one release version, equal to the suite version** — no separately-tracked tool SemVer (normative rules: `mushpi-hub/MAINTAINING.md` §Version & Release Semantics, root `AGENTS.md` §Release & Branching Model). The mock impersonates firmware, so its release version must equal what it represents.
 
 | Identity | Lives in | Must match | Where it surfaces |
 |---|---|---|---|
-| **Represented firmware version** | `src/mushpi_mock/VERSION` + `state.py::_SOFTWARE_VERSION` | `mushpi-grow/app/state.py::_SOFTWARE_VERSION` | `GET /system`, `GET /` (+ its `firmware_version` key), announce payload |
+| **Release / represented firmware version** | `src/mushpi_mock/VERSION` + `state.py::_SOFTWARE_VERSION` + `pyproject.toml` `version` (exposed as `mushpi_mock.__version__` via `importlib.metadata`) | `mushpi-grow/app/state.py::_SOFTWARE_VERSION` and the suite version | `GET /system`, `GET /` (`firmware_version` key), announce payload, `GET /version` (`mock_version` and `represented_firmware_version`) |
 | **Represented API contract version** | `state.py::_API_VERSION` | `mushpi-grow/app/state.py::_API_VERSION` | `GET /` `api_version` key, announce payload `api_version` |
-| **Mock's own service version** | `pyproject.toml` `version` (exposed as `mushpi_mock.__version__` via `importlib.metadata`) | nothing — independent SemVer | `GET /version` only (`mock_version` field) |
 
-The mock and the firmware it represents **must always report the same version**. The version appears in `GET /system` and `GET /` responses, and the server uses it for display.
+The mock and the firmware it represents **must always report the same version**. It appears in `GET /system` and `GET /` responses, and the server uses it for display.
 
-**Single sources of truth**: `mushpi-grow/app/state.py` → `_SOFTWARE_VERSION` + `_API_VERSION`
+**Single sources of truth**: `mushpi-grow/app/state.py` → `_SOFTWARE_VERSION` + `_API_VERSION`. Bump grow first, then mirror it here — this repo's release commit is not independent of grow's.
 
-When the firmware version bumps, **two** mock places need updating:
+When the release version bumps, **four** places move in one commit:
 
-1. `src/mushpi_mock/VERSION` — plain text file with just the represented firmware version string (e.g., `0.8.4`)
+1. `src/mushpi_mock/VERSION` — plain text file holding just the version string, **with a trailing newline** (dropping it is a byte-format diff the gates tolerate but that pollutes history)
 2. `src/mushpi_mock/state.py` → `_SOFTWARE_VERSION` constant
+3. `pyproject.toml` → `version`
+4. `uv.lock` — regenerate with `uv lock`; the demo image builds with `uv sync --frozen`, which never rewrites the lock, so a stale lock ships a pin that contradicts `pyproject.toml`. Run `uv sync` afterwards or `importlib.metadata` (and therefore `GET /version`'s `mock_version`) keeps reporting the old value in a dev shell.
 
-When `_API_VERSION` bumps in grow (a breaking Pico↔Server contract change), update `state.py::_API_VERSION` **in the same pass** — an out-of-date mock would silently mask a real incompatibility. The mock's own `pyproject.toml` version is bumped independently, whenever the mock tool itself changes meaningfully.
+When `_API_VERSION` bumps in grow (a breaking Pico↔Server contract change), update `state.py::_API_VERSION` **in the same pass** — an out-of-date mock would silently mask a real incompatibility. It is a contract generation, not a release number, so a release bump never moves it.
 
-`GET /version` returns all three (`mock_version`, `represented_firmware_version`, `represented_api_version`) — it is a mock-only route, NOT part of the mirrored Pico API, and must not be added to `spec/openapi.yaml`.
+`GET /version` returns all three (`mock_version`, `represented_firmware_version`, `represented_api_version`) — it is a mock-only route, NOT part of the mirrored Pico API, and must not be added to `spec/openapi.yaml`. `mock_version` and `represented_firmware_version` now always carry the same value; the fields stay separate because they answer different questions.
 
 ### When to update
 

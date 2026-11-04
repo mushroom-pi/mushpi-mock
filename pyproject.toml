@@ -1,6 +1,6 @@
 [project]
 name = "mushpi-mock"
-version = "0.2.0"
+version = "0.9.0"
 description = "Mock Pico growing unit — mirrors mushpi-grow REST API with synthetic sensor data"
 readme = "README.md"
 license = "MIT"
