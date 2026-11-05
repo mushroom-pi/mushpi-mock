@@ -139,7 +139,7 @@ The mock carries **one release version, equal to the suite version** (normative 
 `GET /version` exposes three fields — `mock_version`, `represented_firmware_version`, `represented_api_version` — because they answer different questions (`mock_version` and `represented_firmware_version` now always carry the same value):
 
 ```json
-{ "mock_version": "0.9.0", "represented_firmware_version": "0.9.0", "represented_api_version": 1 }
+{ "mock_version": "0.9.1", "represented_firmware_version": "0.9.0", "represented_api_version": 1 }
 ```
 
 Verify the alignment with:
@@ -168,6 +168,12 @@ curl -s -X PUT http://localhost:5001/setpoints \
 curl -s http://localhost:5001/ | python -m json.tool
 
 kill %1
+```
+
+Build the image locally to confirm the packaging stays intact (needs Docker):
+
+```bash
+docker build -f Dockerfile -t mushpi-mock:local-check .
 ```
 
 ## License

@@ -1,0 +1,54 @@
+# Per-Dockerfile ignore file — governs every build of `Dockerfile` (BuildKit
+# prefers `<dockerfile>.dockerignore` over the context root's shared
+# `.dockerignore` and does NOT read the shared one when this file exists). The
+# old packaging layer used the same per-Dockerfile binding (a file named after
+# its Dockerfile), so this repo keeps that convention rather than the generic
+# `.dockerignore` name.
+#
+# Everything below is excluded from the context upload. The Dockerfile COPYs
+# exactly these paths — pyproject.toml, uv.lock, README.md, LICENSE and src/ —
+# so NONE of them may appear in this list. (The predecessor file excluded a
+# root-level README.md and LICENSE; that was the other repo's copy. Here those
+# names are this image's build inputs, so the exclusions were dropped, not
+# ported.)
+
+# VCS
+.git
+**/.git
+
+# Python scratch a local checkout carries — never build inputs.
+.venv
+**/.venv
+**/__pycache__
+**/*.pyc
+.mypy_cache
+**/.mypy_cache
+.ruff_cache
+**/.ruff_cache
+
+# Local runtime config — untracked, may hold a real secret. The demo stack
+# bind-mounts the generated config at /app/config.json instead.
+config.json
+
+# Secrets and live state — must never be baked into any image.
+.env
+.env.*
+**/.env
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# Repo files that are not inputs to this build (root-level matches only).
+# README.md and LICENSE deliberately do NOT appear here — the Dockerfile COPYs
+# them.
+Dockerfile
+.dockerignore
+*.dockerignore
+.github
+.gitignore
+.python-version
+AGENTS.md
+REFERENCE.md
+config.example.json
+scripts

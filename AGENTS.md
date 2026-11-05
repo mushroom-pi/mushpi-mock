@@ -20,11 +20,14 @@ These conventions are read by the `mushpi-mock` agent. The agent is a **single a
 mushpi-mock/
 ├── pyproject.toml        # Dependencies, scripts, build config
 ├── uv.lock               # Lockfile (like yarn.lock)
+├── Dockerfile            # Mock image — published by this repo's tag workflow; consumed by mushpi-demo as a pinned GHCR tag
+├── Dockerfile.dockerignore  # Per-Dockerfile context filter (BuildKit prefers <dockerfile>.dockerignore, replacing .dockerignore entirely)
 ├── config.example.json   # Example config with defaults
 ├── README.md             # User-facing documentation
 ├── AGENTS.md             # This file
 ├── LICENSE               # MIT (verbatim SPDX text)
 ├── .python-version       # Python version pin
+├── .github/workflows/    # publish.yml — builds and pushes the mock image on a v* tag (or a dispatch naming an existing tag)
 ├── scripts/
 │   ├── check-version-alignment.sh  # grow ⇔ mock version check (run manually)
 │   ├── check-unit-page-drift.sh    # vendored page assets vs grow (exit 0/1/2)
@@ -112,7 +115,7 @@ found. Read-only.
 - **Docstrings** on every module, class, and non-trivial function
 - **NestJS analogies** in module docstrings to help the TypeScript-savvy developer
 - **Runtime persistence is router-only**: the three mutation handlers (`POST/PUT /setpoints`, `/outputs`, `/control`) are the *sole* writers of the state file via `RuntimeStateStore`; `simulation.py` must never import `runtime_state` (loop-driven switching is not grower-chosen state); restore runs once in `create_app` (the mock's boot slot). Disabling the loop turns relays off synchronously in the handler, then the engine's one-shot latch (`relays_latched`) holds them off exactly once — after that hand-set positions survive. Force handlers (`GET /?force=1`, `GET /sensors?force=1`) tick the unit's **long-lived** engine from `app.state.simulation`, never a throwaway instance — a fresh engine would re-run the one-off relay wipe on every forced read
-- **Packaging lives in `mushpi-demo`, not here — treat the CLI script name and the Python floor as a published interface.** That repo's `Dockerfile.mock` builds this repo's code as a build input; the release repo (`mushpi-hub`) builds only the hub image. Details: `REFERENCE.md` § Packaging & the mock image contract
+- **Packaging lives here; treat the CLI script name and the Python floor as a published interface.** `Dockerfile` + `Dockerfile.dockerignore` build the image, and `.github/workflows/publish.yml` publishes `ghcr.io/mushroom-pi/mushpi-mock` on a `v*` tag (or a dispatch naming an existing tag), guarded by tag ⇔ `src/mushpi_mock/VERSION`, emitting only the release tag and a short-SHA tag — never `latest`. The private `mushpi-demo` repo consumes the pinned tag; no demo host builds it, and its `docker-compose.local.yml` is the only consumer that builds from a working copy (context = this repo's root). It belongs here because `mushpi-demo` carries no release tags, so an event in that repo could never publish a release image. Details: `REFERENCE.md` § Packaging & the mock image contract
 
 ## When the Agent Runs
 
@@ -136,9 +139,10 @@ The `mushpi-mock` agent is triggered:
 
 ### Verification — what this repo actually supports
 
-There is **no** pytest/ruff/mypy test suite, linter, or type checker configured in this repo. `pyproject.toml` declares runtime dependencies only — no test/lint config, no CI. Do not treat them as gates: `uv run pytest` finds no tests, and `uvx ruff check src` / `uvx mypy src` run without config and surface pre-existing, unactionable findings (fine for an ad-hoc look, never a required gate).
+There is **no** pytest/ruff/mypy test suite, linter, or type checker configured in this repo. `pyproject.toml` declares runtime dependencies only — no test/lint config; the only CI is `.github/workflows/publish.yml`, which builds and publishes the image and runs no tests. Do not treat them as gates: `uv run pytest` finds no tests, and `uvx ruff check src` / `uvx mypy src` run without config and surface pre-existing, unactionable findings (fine for an ad-hoc look, never a required gate).
 
-The two real checks, run from `mushpi-mock/`:
+The three real checks, run from `mushpi-mock/`:
 
 1. **Version alignment** — run `./scripts/check-version-alignment.sh` (firmware three-way check: grow `_SOFTWARE_VERSION` vs `src/mushpi_mock/VERSION` and `src/mushpi_mock/state.py`; plus API two-way check: grow `_API_VERSION` vs `src/mushpi_mock/state.py`). Exit 0 = all aligned.
 2. **API smoke test** — start the mock and exercise the endpoints it serves (`GET /sensors`, `PUT /setpoints`, `GET /`, `GET /ui`, `GET /provision`, `GET /static/unit.js`), per `README.md` § Verification. This is the functional gate for any API change.
+3. **Image build** — `docker build -f Dockerfile -t mushpi-mock:local-check .` (needs Docker). The publish workflow adds the tag ⇔ `VERSION` guard before pushing, so a version bump that forgets a place fails there rather than shipping.
