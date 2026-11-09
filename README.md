@@ -129,14 +129,17 @@ All endpoints mirror the real Pico firmware. See [`mushpi-grow/spec/openapi.yaml
 
 ## Version Alignment
 
-The mock carries **one release version, equal to the suite version** (normative rules: `mushpi-hub/MAINTAINING.md` §Version & Release Semantics, root `AGENTS.md` §Release & Branching Model). Because it impersonates firmware, its release version must equal what it represents — there is no separately-tracked tool SemVer.
+The mock is two things at once — a released tool **and** a firmware impersonator — and each identity carries its own version (normative rules: `mushpi-hub/MAINTAINING.md` §Version & Release Semantics, root `AGENTS.md` §Release & Branching Model).
 
 | Identity | Where it lives | Rule |
 |---|---|---|
-| **Release / represented firmware version** | `pyproject.toml` `version` (exposed as `mushpi_mock.__version__` via `importlib.metadata`), `src/mushpi_mock/VERSION`, and `_SOFTWARE_VERSION` in `src/mushpi_mock/state.py` | All three equal the suite version — and grow's `_SOFTWARE_VERSION` in [`mushpi-grow/app/state.py`](https://github.com/mushroom-pi/mushpi-grow/blob/dev/app/state.py), the single source of truth. This is what `GET /system`, `GET /` (incl. its `firmware_version` key), and the announce payload report. |
+| **Mock's own release version** | `pyproject.toml` `version` (exposed as `mushpi_mock.__version__` via `importlib.metadata`) and `src/mushpi_mock/VERSION` | The two agree with each other, and with this repo's `v*` tag (the publish workflow guards tag ⇔ `VERSION`). Tracks the mock's packaging — this is what `GET /version`'s `mock_version` reports and what the published image tag carries. |
+| **Simulated firmware version** | `_SOFTWARE_VERSION` in `src/mushpi_mock/state.py` | Always equals grow's `_SOFTWARE_VERSION` in [`mushpi-grow/app/state.py`](https://github.com/mushroom-pi/mushpi-grow/blob/dev/app/state.py), the single source of truth. This is what `GET /system`, `GET /` (incl. its `firmware_version` key), and the announce payload report. |
 | **Represented API contract version** | `_API_VERSION` in `src/mushpi_mock/state.py` | Must equal grow's `_API_VERSION` — the Pico↔Server REST contract generation reported in `GET /` and the announce payload (`api_version`). A contract generation, not a release number: bumped only on breaking contract changes, never on a release. |
 
-`GET /version` exposes three fields — `mock_version`, `represented_firmware_version`, `represented_api_version` — because they answer different questions (`mock_version` and `represented_firmware_version` now always carry the same value):
+The mock's own release version **may lead the firmware version it simulates** — this is deliberate, not a defect. A mock release can ship a tool change while the firmware stands still, so the two identities are not required to be equal and are never "realigned" onto each other.
+
+`GET /version` exposes three fields — `mock_version`, `represented_firmware_version`, `represented_api_version` — because they answer different questions; `mock_version` and `represented_firmware_version` may differ when the mock ships ahead of the firmware:
 
 ```json
 { "mock_version": "0.9.1", "represented_firmware_version": "0.9.0", "represented_api_version": 1 }
@@ -148,7 +151,9 @@ Verify the alignment with:
 ./scripts/check-version-alignment.sh
 ```
 
-It checks the firmware version three-way (grow `_SOFTWARE_VERSION` vs `VERSION` vs `state.py`) and the API version two-way (grow `_API_VERSION` vs `state.py`), printing one pass/fail line each. Exit 0 = all aligned, 1 = mismatch / extraction failure, 2 = grow checkout not found. If you manually change the firmware version, update `src/mushpi_mock/VERSION`, `pyproject.toml` `version`, and the `_SOFTWARE_VERSION` constant in `state.py` (then run `uv lock`); if grow's `_API_VERSION` moves, update `state.py::_API_VERSION` in the same pass.
+It runs three checks — the simulated firmware version (grow `_SOFTWARE_VERSION` vs `state.py::_SOFTWARE_VERSION`), the mock's own version (`VERSION` vs `pyproject.toml` `version`), and the API contract version (grow `_API_VERSION` vs `state.py::_API_VERSION`) — printing one pass/fail line each, with no comparison between the two identity types. Exit 0 = all aligned, 1 = mismatch / extraction failure, 2 = grow checkout not found.
+
+To bump the mock's **own** release version, update `src/mushpi_mock/VERSION` and `pyproject.toml` `version` in one commit, then run `uv lock` — `state.py::_SOFTWARE_VERSION` does **not** ride along. To mirror a grow firmware bump, update `state.py::_SOFTWARE_VERSION` (and `state.py::_API_VERSION` if grow's `_API_VERSION` moved) in the same pass.
 
 ## Verification
 
