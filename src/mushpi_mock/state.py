@@ -22,10 +22,12 @@ import time
 from typing import Any
 
 # Must match mushpi-grow/app/state.py::_SOFTWARE_VERSION (the source of truth).
-# Also keep src/mushpi_mock/VERSION in sync — it's a plain-text version file
-# used for automated checks between the two repos.
-# This is the *represented firmware version* — the mock's own service version
-# lives in pyproject.toml (exposed separately via GET /version).
+# This is the *simulated firmware version* — what the mock announces and serves
+# as firmware_version, impersonating a real unit. The mock's OWN release version
+# lives in src/mushpi_mock/VERSION + pyproject.toml (surfaced separately via
+# GET /version as mock_version) and may deliberately LEAD this constant: the
+# image releases on the mock's own tag while this value only ever mirrors the
+# real firmware. Never move this constant to match the mock's own version.
 _SOFTWARE_VERSION = "0.9.0"
 
 # Must match mushpi-grow/app/state.py::_API_VERSION (source of truth).

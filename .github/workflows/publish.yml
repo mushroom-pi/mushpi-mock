@@ -1,0 +1,142 @@
+name: Build & Publish Mock Image
+
+# Publishes the simulated-unit image the demo stack pulls:
+# ghcr.io/mushroom-pi/mushpi-mock. This is the ONLY publisher of that image —
+# the demo host never builds it (mushpi-demo's published overlay references
+# the published tag and carries no build). Modelled on
+# mushpi-hub/.github/workflows/publish.yml, but with a stricter tag policy:
+# no `latest`, and no tag from a branch, because a moving tag on a demo host is
+# how stale code starts silently serving. A `v*` tag in THIS repo already means
+# "a new mock version exists" (one suite version per release), so there is no
+# change-detection or content-hash gating — every trigger builds and pushes.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: >
+          Release tag to build and publish, spelled exactly as it is tagged in
+          this repository (e.g. v0.9.0). Exists so a release tag published
+          before this workflow landed can be backfilled — a tag trigger cannot
+          fire for an already-existing tag — and so a rebuild can be forced
+          without cutting a new tag.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  # Named after this repository, as the hub image is named after its own:
+  # the owner is interpolated so an org rename cannot break the name.
+  IMAGE_NAME: ${{ github.repository_owner }}/mushpi-mock
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      # ── Tag resolution. EVERYTHING downstream — the checkout ref and the
+      # published image tag — reads this single output, so the source that
+      # gets compiled and the name it gets published under cannot disagree.
+      # Building the default branch while tagging a release is the exact defect
+      # this step exists to prevent.
+      # Values reach the shell through env, never by direct ${{ }} interpolation
+      # into a script body: the dispatch input is free-form operator text.
+      - name: Resolve the release tag to publish
+        id: resolved
+        env:
+          DISPATCH_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            tag="${DISPATCH_TAG:-}"
+          else
+            tag="${GITHUB_REF_NAME:-}"
+          fi
+          if [ -z "$tag" ]; then
+            echo "::error::no release tag resolved — a v* tag push carries GITHUB_REF_NAME, and workflow_dispatch needs the 'tag' input filled in with the tag to publish (e.g. v0.9.0)."
+            exit 1
+          fi
+          case "$tag" in
+            v[0-9]*) ;;
+            *)
+              echo "::error::refusing to publish '${tag}' — the tag must be a release tag of the form vX.Y.Z, because that string is both the checkout ref and the image tag."
+              exit 1
+              ;;
+          esac
+          echo "value=${tag}" >> "$GITHUB_OUTPUT"
+          echo "Resolved release tag: ${tag}"
+
+      # Checked out at the RESOLVED TAG, not at the event ref: a tag push is
+      # already there, but a workflow_dispatch would otherwise build the
+      # default branch under the dispatched tag's name.
+      - name: Checkout this repository at the resolved tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ steps.resolved.outputs.value }}
+
+      # ── Tag/source guard, BEFORE the build. The image tag names the MOCK's
+      # OWN release version, which its VERSION file declares; the firmware
+      # version the mock simulates is a separate identity (state.py, mirroring
+      # grow) and is not what the tag pins — the mock's own version may lead
+      # it. Publishing v0.9.1 from a source tree that says 0.9.0 would hand
+      # the demo an image whose reported own version contradicts its tag.
+      # Both values are named on failure.
+      - name: Verify the tag matches the source version
+        env:
+          TAG: ${{ steps.resolved.outputs.value }}
+        run: |
+          set -euo pipefail
+          version_file="src/mushpi_mock/VERSION"
+          if [ ! -f "$version_file" ]; then
+            echo "::error::${version_file} is missing at ${TAG} — cannot confirm the source version matches the tag being published."
+            exit 1
+          fi
+          tag_ver="${TAG#v}"
+          src_ver="$(tr -d '[:space:]' < "$version_file")"
+          if [ "$tag_ver" != "$src_ver" ]; then
+            echo "::error::git tag ${TAG} does not match the source version: tag says ${tag_ver}, ${version_file} at ${TAG} says ${src_ver}. Cut the tag on the commit that carries the release bump (the final commit of the cycle on this repo's dev branch), then dispatch this workflow again."
+            exit 1
+          fi
+          echo "Tag/source guard OK: ${TAG} publishes ${src_ver}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      # Tag policy lives here, at the call site — `latest` is switched OFF
+      # explicitly, because metadata-action's default flavor (latest=auto) would
+      # move `latest` on a v* tag push. `type=sha,format=short` adds the
+      # immutable commit tag alongside the release tag; nothing here tags by
+      # branch. The demo pins exact tags and pulls anonymously, so a moving
+      # target is never resolvable from this workflow.
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: latest=false
+          tags: |
+            type=raw,value=${{ steps.resolved.outputs.value }}
+            type=sha,format=short
+
+      - name: Build and push image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
