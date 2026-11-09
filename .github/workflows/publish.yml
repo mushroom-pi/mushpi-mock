@@ -79,11 +79,13 @@ jobs:
         with:
           ref: ${{ steps.resolved.outputs.value }}
 
-      # ── Tag/source guard, BEFORE the build. The suite ships one version for
-      # every component, and this repo's own VERSION file is what that
-      # component actually is. Publishing v0.9.1 from a source tree that says
-      # 0.9.0 would hand the demo an image whose reported version contradicts
-      # its tag. Both values are named on failure.
+      # ── Tag/source guard, BEFORE the build. The image tag names the MOCK's
+      # OWN release version, which its VERSION file declares; the firmware
+      # version the mock simulates is a separate identity (state.py, mirroring
+      # grow) and is not what the tag pins — the mock's own version may lead
+      # it. Publishing v0.9.1 from a source tree that says 0.9.0 would hand
+      # the demo an image whose reported own version contradicts its tag.
+      # Both values are named on failure.
       - name: Verify the tag matches the source version
         env:
           TAG: ${{ steps.resolved.outputs.value }}

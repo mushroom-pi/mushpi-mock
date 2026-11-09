@@ -35,7 +35,7 @@ mushpi-mock/
 ├── .venv/                # Virtual environment (auto-created by uv)
 └── src/mushpi_mock/
     ├── __init__.py        # Package docstring + `__version__` (mock's OWN version, from pyproject.toml metadata)
-    ├── VERSION            # REPRESENTED firmware version (must match grow; NOT the mock's own version)
+    ├── VERSION            # Mock's OWN release version (image-tag guard; matches pyproject — NOT the simulated firmware version)
     ├── main.py            # FastAPI app factory + click CLI
     ├── config.py          # Pydantic config models
     ├── state.py           # In-memory state (`_SOFTWARE_VERSION` + `_API_VERSION` = represented versions); per-handle MAC (`_mac_for_handle`), poll/announce stamps
@@ -64,29 +64,31 @@ Top-level `MockConfig` keys (`config.py`, JSON via `--config`) and `start` CLI f
 | — | `--seed-days` | `0` | Days of backdated readings to seed on startup |
 | — | `--config` / `-c` | `None` | Path to config JSON |
 
-## Version Alignment — MANDATORY (Single Suite Version)
+## Version Alignment — MANDATORY (Two Version Identities)
 
-The mock carries **one release version, equal to the suite version** — no separately-tracked tool SemVer (normative rules: `mushpi-hub/MAINTAINING.md` §Version & Release Semantics, root `AGENTS.md` §Release & Branching Model). The mock impersonates firmware, so its release version must equal what it represents.
+The mock is two things at once — a released tool **and** a firmware impersonator — and each identity has its own version (normative rules: `mushpi-hub/MAINTAINING.md` §Version & Release Semantics, root `AGENTS.md` §Release & Branching Model):
 
 | Identity | Lives in | Must match | Where it surfaces |
 |---|---|---|---|
-| **Release / represented firmware version** | `src/mushpi_mock/VERSION` + `state.py::_SOFTWARE_VERSION` + `pyproject.toml` `version` (exposed as `mushpi_mock.__version__` via `importlib.metadata`) | `mushpi-grow/app/state.py::_SOFTWARE_VERSION` and the suite version | `GET /system`, `GET /` (`firmware_version` key), announce payload, `GET /version` (`mock_version` and `represented_firmware_version`) |
+| **Mock's own release version** | `src/mushpi_mock/VERSION` + `pyproject.toml` `version` (exposed as `mushpi_mock.__version__` via `importlib.metadata`) | each other, and this repo's `v*` tag (publish workflow guards tag ⇔ `VERSION`) | `GET /version` (`mock_version`); the published image tag |
+| **Simulated firmware version** | `state.py::_SOFTWARE_VERSION` | `mushpi-grow/app/state.py::_SOFTWARE_VERSION` — **always** | `GET /system`, `GET /` (`firmware_version` key), announce payload, `GET /version` (`represented_firmware_version`) |
 | **Represented API contract version** | `state.py::_API_VERSION` | `mushpi-grow/app/state.py::_API_VERSION` | `GET /` `api_version` key, announce payload `api_version` |
 
-The mock and the firmware it represents **must always report the same version**. It appears in `GET /system` and `GET /` responses, and the server uses it for display.
+The rule that binds the two software identities is exactly one thing: **the firmware version the mock simulates must equal the real firmware's version** — that value is what the unit announces and what the server displays. The mock's own release version **may lead the firmware version it simulates; this is deliberate and permanent** — a mock image can ship a tool change while the firmware stands still. Never "realign" the pair by moving `state.py::_SOFTWARE_VERSION` onto `VERSION` (or vice versa).
 
-**Single sources of truth**: `mushpi-grow/app/state.py` → `_SOFTWARE_VERSION` + `_API_VERSION`. Bump grow first, then mirror it here — this repo's release commit is not independent of grow's.
+**Source of truth for the simulated identities**: `mushpi-grow/app/state.py` → `_SOFTWARE_VERSION` + `_API_VERSION`. Bump grow first, then mirror the **simulated** constants here. The mock's own release commit is independent: a release that touches only the mock moves its own version and leaves the simulated ones alone.
 
-When the release version bumps, **four** places move in one commit:
+When the **mock's own** release version bumps, **three** places move in one commit:
 
 1. `src/mushpi_mock/VERSION` — plain text file holding just the version string, **with a trailing newline** (dropping it is a byte-format diff the gates tolerate but that pollutes history)
-2. `src/mushpi_mock/state.py` → `_SOFTWARE_VERSION` constant
-3. `pyproject.toml` → `version`
-4. `uv.lock` — regenerate with `uv lock`; the demo image builds with `uv sync --frozen`, which never rewrites the lock, so a stale lock ships a pin that contradicts `pyproject.toml`. Run `uv sync` afterwards or `importlib.metadata` (and therefore `GET /version`'s `mock_version`) keeps reporting the old value in a dev shell.
+2. `pyproject.toml` → `version`
+3. `uv.lock` — regenerate with `uv lock`; the demo image builds with `uv sync --frozen`, which never rewrites the lock, so a stale lock ships a pin that contradicts `pyproject.toml`. Run `uv sync` afterwards or `importlib.metadata` (and therefore `GET /version`'s `mock_version`) keeps reporting the old value in a dev shell.
 
-When `_API_VERSION` bumps in grow (a breaking Pico↔Server contract change), update `state.py::_API_VERSION` **in the same pass** — an out-of-date mock would silently mask a real incompatibility. It is a contract generation, not a release number, so a release bump never moves it.
+`state.py::_SOFTWARE_VERSION` does **not** ride along — it moves only when grow's firmware version moves.
 
-`GET /version` returns all three (`mock_version`, `represented_firmware_version`, `represented_api_version`) — it is a mock-only route, NOT part of the mirrored Pico API, and must not be added to `spec/openapi.yaml`. `mock_version` and `represented_firmware_version` now always carry the same value; the fields stay separate because they answer different questions.
+When grow bumps `_SOFTWARE_VERSION` (or `_API_VERSION`), update the simulated constant in `state.py` in that pass; when `_API_VERSION` bumps (a breaking Pico↔Server contract change), an out-of-date mock would silently mask a real incompatibility. `_API_VERSION` is a contract generation, not a release number, so a release bump never moves it.
+
+`GET /version` returns all three (`mock_version`, `represented_firmware_version`, `represented_api_version`) — it is a mock-only route, NOT part of the mirrored Pico API, and must not be added to `spec/openapi.yaml`. `mock_version` and `represented_firmware_version` answer different questions and **may carry different values** when the mock ships ahead of the firmware.
 
 ### When to update
 
@@ -99,11 +101,13 @@ When `_API_VERSION` bumps in grow (a breaking Pico↔Server contract change), up
 ./scripts/check-version-alignment.sh
 ```
 
-Runs two checks: firmware (grow `_SOFTWARE_VERSION` vs **both** `src/mushpi_mock/VERSION`
-and `src/mushpi_mock/state.py::_SOFTWARE_VERSION`) and API (grow `_API_VERSION` vs
-`src/mushpi_mock/state.py::_API_VERSION`). Prints a pass/fail line per check.
-Exit 0 = both aligned, 1 = any mismatch / extraction failure, 2 = grow checkout not
-found. Read-only.
+Runs three checks: simulated firmware (grow `_SOFTWARE_VERSION` vs
+`src/mushpi_mock/state.py::_SOFTWARE_VERSION`), the mock's own version
+(`src/mushpi_mock/VERSION` vs `pyproject.toml` `version` — never compared to the
+firmware version; the mock's own may lead it, deliberately), and API (grow
+`_API_VERSION` vs `src/mushpi_mock/state.py::_API_VERSION`). Prints a pass/fail
+line per check. Exit 0 = all aligned, 1 = any mismatch / extraction failure,
+2 = grow checkout not found. Read-only.
 
 ## Coding Conventions
 
@@ -143,6 +147,6 @@ There is **no** pytest/ruff/mypy test suite, linter, or type checker configured 
 
 The three real checks, run from `mushpi-mock/`:
 
-1. **Version alignment** — run `./scripts/check-version-alignment.sh` (firmware three-way check: grow `_SOFTWARE_VERSION` vs `src/mushpi_mock/VERSION` and `src/mushpi_mock/state.py`; plus API two-way check: grow `_API_VERSION` vs `src/mushpi_mock/state.py`). Exit 0 = all aligned.
+1. **Version alignment** — run `./scripts/check-version-alignment.sh` (simulated-firmware check: grow `_SOFTWARE_VERSION` vs `src/mushpi_mock/state.py`; mock-own-version check: `src/mushpi_mock/VERSION` vs `pyproject.toml` `version`, deliberately not compared to the firmware; plus API check: grow `_API_VERSION` vs `src/mushpi_mock/state.py`). Exit 0 = all aligned.
 2. **API smoke test** — start the mock and exercise the endpoints it serves (`GET /sensors`, `PUT /setpoints`, `GET /`, `GET /ui`, `GET /provision`, `GET /static/unit.js`), per `README.md` § Verification. This is the functional gate for any API change.
 3. **Image build** — `docker build -f Dockerfile -t mushpi-mock:local-check .` (needs Docker). The publish workflow adds the tag ⇔ `VERSION` guard before pushing, so a version bump that forgets a place fails there rather than shipping.
